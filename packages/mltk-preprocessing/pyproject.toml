@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mltk-preprocessing"
+version = "0.1.0"
+description = "Leakage-free, dataframe-preserving preprocessing transformers for MLTK"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mltk-core",
+]
+
+[project.entry-points."mltk.transformers"]
+type_caster = "mltk_preprocessing.type_caster:TypeCaster"
+missing_imputer = "mltk_preprocessing.imputer:MissingImputer"
+outlier_clipper = "mltk_preprocessing.outlier:OutlierClipper"
+rare_grouper = "mltk_preprocessing.rare_grouper:RareCategoryGrouper"
+categorical_encoder = "mltk_preprocessing.encoder:CategoricalEncoder"
+feature_scaler = "mltk_preprocessing.scaler:FeatureScaler"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]

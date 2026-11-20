@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mltk-qc"
+version = "0.1.0"
+description = "Automated data quality checks, CSV loader, and EDA reporting for MLTK"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mltk-core",
+    "chardet>=5.0.0",
+]
+
+[project.optional-dependencies]
+profiling = [
+    "ydata-profiling>=4.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+]

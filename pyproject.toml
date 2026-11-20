@@ -1,0 +1,57 @@
+[project]
+name = "mltk-workspace"
+version = "0.1.0"
+description = "Modular toolkit for tabular machine learning workflows"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mltk-core",
+    "mltk-qc",
+    "mltk-preprocessing",
+    "mltk-features",
+    "mltk-selection",
+    "mltk-modelling",
+    "mltk-monitoring",
+    "pytest>=7.0.0",
+]
+
+[tool.uv.workspace]
+members = [
+    "packages/mltk-core",
+    "packages/mltk-qc",
+    "packages/mltk-preprocessing",
+    "packages/mltk-features",
+    "packages/mltk-selection",
+    "packages/mltk-modelling",
+    "packages/mltk-monitoring",
+]
+
+[tool.uv.sources]
+mltk-core = { workspace = true }
+mltk-qc = { workspace = true }
+mltk-preprocessing = { workspace = true }
+mltk-features = { workspace = true }
+mltk-selection = { workspace = true }
+mltk-modelling = { workspace = true }
+mltk-monitoring = { workspace = true }
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --import-mode=importlib"
+testpaths = ["packages"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
