@@ -31,6 +31,7 @@ class QualityCheckStep(BaseStep):
         self.max_cardinality = max_cardinality
         self.leakage_threshold = leakage_threshold
         self.enforce_gate = enforce_gate
+        self.data_quality_score_: float = 100.0
 
     def _fit(
         self,
@@ -144,6 +145,24 @@ class QualityCheckStep(BaseStep):
                 )
             else:
                 self.report_.add("data_leakage", "ok", "No obvious target leakage detected.")
+
+        # 8. Compute Overall Data Quality Score (0 - 100)
+        score = 100.0
+        mean_missing = float(X.isna().mean().mean())
+        score -= min(35.0, mean_missing * 70.0)
+        score -= min(20.0, dup_pct * 100.0)
+        if len(X.columns) > 0:
+            score -= min(20.0, (len(constant_cols) / len(X.columns)) * 50.0)
+        if self.report_.has_errors:
+            score -= 25.0
+        self.data_quality_score_ = float(max(0.0, min(100.0, round(score, 1))))
+        dqs_status = "ok" if self.data_quality_score_ >= 75 else ("warn" if self.data_quality_score_ >= 50 else "error")
+        self.report_.add(
+            "data_quality_score",
+            dqs_status,
+            f"Overall Data Quality Score: {self.data_quality_score_} / 100",
+            {"score": self.data_quality_score_},
+        )
 
         # Gate enforcement
         if self.enforce_gate and (cfg is None or cfg.quality_gate) and self.report_.has_errors:

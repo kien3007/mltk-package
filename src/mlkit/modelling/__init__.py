@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from mlkit.modelling.arena import ModelArena
-from mlkit.modelling.evaluation import CVEvaluator, compute_metrics
+from mlkit.modelling.evaluation import (
+    CalibratedModelWrapper,
+    CVEvaluator,
+    compute_bootstrap_ci,
+    compute_metrics,
+)
 from mlkit.modelling.trainers import (
     DummyTrainer,
     LGBMTrainer,
@@ -12,15 +17,22 @@ from mlkit.modelling.trainers import (
     SklearnModelWrapper,
     XGBTrainer,
 )
+from mlkit.modelling.tuning import LGBM_SPACE, LINEAR_SPACE, RF_SPACE, OptunaSearch
 
 __all__ = [
     "CVEvaluator",
+    "CalibratedModelWrapper",
     "DummyTrainer",
+    "LGBM_SPACE",
     "LGBMTrainer",
+    "LINEAR_SPACE",
     "LinearTrainer",
     "ModelArena",
+    "OptunaSearch",
+    "RF_SPACE",
     "RandomForestTrainer",
     "SklearnModelWrapper",
     "XGBTrainer",
+    "compute_bootstrap_ci",
     "compute_metrics",
 ]

@@ -97,6 +97,23 @@ class Pipeline(BaseEstimator):
                 master_report.merge(step.report_)
         return master_report
 
+    def to_html_report(
+        self,
+        output_path: str | Path | None = None,
+        summary_stats: dict[str, Any] | None = None,
+        figures: list[tuple[str, Any]] | None = None,
+    ) -> str:
+        """Export all step reports and diagnostic figures to an interactive standalone HTML report."""
+        from mlkit.viz.html_report import generate_html_report
+
+        return generate_html_report(
+            self.report(),
+            title="MLKit Pipeline Execution & Diagnostic Report",
+            summary_stats=summary_stats,
+            figures=figures,
+            output_path=output_path,
+        )
+
     def save(
         self,
         path: str | Path,

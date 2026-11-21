@@ -15,6 +15,7 @@ from mlkit.core.errors import (
 from mlkit.core.pipeline import Pipeline
 from mlkit.core.report import Report
 from mlkit.core.step import BaseStep
+from mlkit.qc_eda.qc import QualityCheckStep, run_qc
 
 __version__ = "0.1.0"
 
@@ -25,10 +26,12 @@ __all__ = [
     "MLKitError",
     "NotFittedError",
     "Pipeline",
+    "QualityCheckStep",
     "QualityGateError",
     "Report",
     "TaskConfig",
     "ValidationError",
     "load_bundle",
+    "run_qc",
     "save_bundle",
 ]

@@ -187,3 +187,94 @@ class BinningFeatures(BaseStep):
             if c in out.columns and len(edges) > 1:
                 out[f"{c}_bin"] = pd.cut(out[c], bins=edges, labels=False, include_lowest=True).fillna(-1).astype(int)
         return out
+
+
+@register("features.multi_table")
+class MultiTableAggregator(BaseStep):
+    """
+    Automated feature aggregation across relational tables (1-to-many joins).
+
+    Useful for datasets where events/transactions/logs belong to a primary entity
+    (e.g., account_id, customer_id, user_id).
+    """
+
+    def __init__(
+        self,
+        secondary_df: pd.DataFrame,
+        join_key: str,
+        numeric_aggs: list[str] | None = None,
+        categorical_aggs: list[str] | None = None,
+        prefix: str = "rel_",
+        time_col: str | None = None,
+        window_days: list[int] | None = None,
+    ) -> None:
+        super().__init__()
+        self.secondary_df = secondary_df.copy()
+        self.join_key = join_key
+        self.numeric_aggs = numeric_aggs or ["mean", "sum", "std", "min", "max", "count"]
+        self.categorical_aggs = categorical_aggs or ["nunique"]
+        self.prefix = prefix
+        self.time_col = time_col
+        self.window_days = window_days
+        self.agg_table_: pd.DataFrame = pd.DataFrame()
+
+    def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> MultiTableAggregator:
+        sec = self.secondary_df
+        if self.join_key not in sec.columns:
+            self.report_.add(
+                "multi_table_agg",
+                "warn",
+                f"Join key '{self.join_key}' not found in secondary DataFrame.",
+            )
+            return self
+
+        exclude_cols = {self.join_key}
+        if self.time_col:
+            exclude_cols.add(self.time_col)
+
+        num_cols = [c for c in sec.select_dtypes(include=[np.number]).columns if c not in exclude_cols]
+        cat_cols = [c for c in sec.select_dtypes(include=["object", "category"]).columns if c not in exclude_cols]
+
+        agg_dict: dict[str, list[str]] = {}
+        for c in num_cols:
+            agg_dict[c] = self.numeric_aggs
+        for c in cat_cols:
+            agg_dict[c] = self.categorical_aggs
+
+        if not agg_dict:
+            self.report_.add("multi_table_agg", "warn", "No valid columns to aggregate in secondary table.")
+            return self
+
+        grouped = sec.groupby(self.join_key, observed=True).agg(agg_dict)
+        grouped.columns = [f"{self.prefix}{col}_{stat}" for col, stat in grouped.columns]
+
+        if self.time_col and self.time_col in sec.columns and self.window_days:
+            sec_time = pd.to_datetime(sec[self.time_col], errors="coerce")
+            max_date = sec_time.max()
+            if pd.notna(max_date):
+                for w in self.window_days:
+                    cutoff = max_date - pd.Timedelta(days=w)
+                    mask = sec_time >= cutoff
+                    sub = sec[mask]
+                    if not sub.empty:
+                        w_grouped = sub.groupby(self.join_key, observed=True)[num_cols].agg(["sum", "mean", "count"])
+                        w_grouped.columns = [f"{self.prefix}{col}_{stat}_last_{w}d" for col, stat in w_grouped.columns]
+                        grouped = grouped.join(w_grouped, how="left")
+
+        self.agg_table_ = grouped.reset_index()
+        self.report_.add(
+            "multi_table_agg",
+            "ok",
+            f"Built {len(grouped.columns)} aggregated features from secondary table keyed on '{self.join_key}'.",
+            {"feature_count": len(grouped.columns)},
+        )
+        return self
+
+    def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        if self.agg_table_.empty or self.join_key not in X.columns:
+            return X
+        out = X.merge(self.agg_table_, on=self.join_key, how="left")
+        fill_zero_cols = [c for c in out.columns if any(c.endswith(s) for s in ["_count", "_sum", "_nunique"])]
+        if fill_zero_cols:
+            out[fill_zero_cols] = out[fill_zero_cols].fillna(0)
+        return out

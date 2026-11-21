@@ -6,7 +6,8 @@ from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
-from sklearn.base import clone
+from sklearn.base import BaseEstimator, clone
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -20,6 +21,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import GroupKFold, KFold, StratifiedKFold, TimeSeriesSplit
 
 from mlkit.core.config import TaskConfig
+from mlkit.core.errors import NotFittedError
 
 
 def compute_metrics(
@@ -116,3 +118,112 @@ class CVEvaluator:
         summary["primary_metric"] = primary_metric
         summary["primary_score"] = summary.get(f"{primary_metric}_mean", 0.0)
         return summary
+
+
+def compute_bootstrap_ci(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    y_prob: np.ndarray | None = None,
+    task_type: Literal["classification", "regression"] = "classification",
+    n_bootstraps: int = 200,
+    ci: float = 0.95,
+    random_state: int = 42,
+) -> dict[str, dict[str, float]]:
+    """
+    Compute non-parametric bootstrap confidence intervals for performance metrics.
+
+    Parameters
+    ----------
+    y_true : np.ndarray
+        True targets.
+    y_pred : np.ndarray
+        Predicted values.
+    y_prob : np.ndarray, optional
+        Predicted probabilities.
+    task_type : "classification" or "regression"
+        Task type.
+    n_bootstraps : int
+        Number of bootstrap resamples (default: 200).
+    ci : float
+        Confidence interval level (default: 0.95).
+    random_state : int
+        Seed for reproducibility.
+
+    Returns
+    -------
+    dict[str, dict[str, float]]
+        Mapping of metric names to mean, std, ci_lower, and ci_upper.
+    """
+    rng = np.random.default_rng(random_state)
+    n = len(y_true)
+    y_t = np.asarray(y_true)
+    y_p = np.asarray(y_pred)
+    y_pr = np.asarray(y_prob) if y_prob is not None else None
+
+    alpha_low = (1.0 - ci) / 2.0
+    alpha_high = 1.0 - alpha_low
+
+    samples: dict[str, list[float]] = {}
+    for _ in range(n_bootstraps):
+        idx = rng.choice(n, size=n, replace=True)
+        sample_true = y_t[idx]
+        sample_pred = y_p[idx]
+        sample_prob = y_pr[idx] if y_pr is not None else None
+
+        if task_type == "classification" and len(np.unique(sample_true)) < 2:
+            continue
+
+        res = compute_metrics(sample_true, sample_pred, sample_prob, task_type=task_type)
+        for k, v in res.items():
+            samples.setdefault(k, []).append(v)
+
+    out: dict[str, dict[str, float]] = {}
+    for k, vals in samples.items():
+        if vals:
+            arr = np.asarray(vals)
+            out[k] = {
+                "mean": float(np.mean(arr)),
+                "std": float(np.std(arr)),
+                "ci_lower": float(np.percentile(arr, alpha_low * 100)),
+                "ci_upper": float(np.percentile(arr, alpha_high * 100)),
+            }
+    return out
+
+
+class CalibratedModelWrapper(BaseEstimator):
+    """
+    Wraps an estimator with CalibratedClassifierCV to output calibrated class probabilities.
+    """
+
+    def __init__(
+        self,
+        base_estimator: Any,
+        method: Literal["sigmoid", "isotonic"] = "sigmoid",
+        cv: int = 3,
+    ) -> None:
+        self.base_estimator = base_estimator
+        self.method = method
+        self.cv = cv
+        self._calibrator: Any = None
+        self._is_fitted: bool = False
+
+    def fit(self, X: pd.DataFrame | np.ndarray, y: Any) -> CalibratedModelWrapper:
+        self._calibrator = CalibratedClassifierCV(
+            estimator=self.base_estimator,
+            method=self.method,
+            cv=self.cv,
+        )
+        self._calibrator.fit(X, y)
+        self._is_fitted = True
+        return self
+
+    def predict(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
+        if not self._is_fitted:
+            raise NotFittedError("CalibratedModelWrapper is not fitted.")
+        return self._calibrator.predict(X)
+
+    def predict_proba(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
+        if not self._is_fitted:
+            raise NotFittedError("CalibratedModelWrapper is not fitted.")
+        return self._calibrator.predict_proba(X)
+

@@ -98,6 +98,12 @@ class Report:
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent, default=str)
 
+    def to_html(self, output_path: str | None = None) -> str:
+        """Export this report as a standalone HTML document."""
+        from mlkit.viz.html_report import generate_html_report
+
+        return generate_html_report(self, title=self.title, output_path=output_path)
+
     def summary(self) -> str:
         lines = [f"=== {self.title} (Passed: {self.is_passed}) ==="]
         for item in self.items:
