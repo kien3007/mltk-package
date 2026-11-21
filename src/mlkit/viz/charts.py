@@ -504,3 +504,256 @@ def plot_calibration_curve(
     fig.tight_layout()
     return fig
 
+
+# ---------------------------------------------------------------------------
+# 10. Business & Imbalanced ─ Precision-Recall Curve
+# ---------------------------------------------------------------------------
+def plot_precision_recall_curve(
+    y_true: np.ndarray | pd.Series,
+    y_prob: np.ndarray,
+    figsize: tuple[int, int] = (6, 5),
+) -> plt.Figure:
+    """
+    Plot Precision-Recall curve with Average Precision (AP) for imbalanced tasks.
+    """
+    from sklearn.metrics import average_precision_score, precision_recall_curve
+
+    if y_prob.ndim == 2:
+        y_prob = y_prob[:, 1]
+
+    y_t = np.asarray(y_true)
+    precision, recall, _ = precision_recall_curve(y_t, y_prob)
+    ap = average_precision_score(y_t, y_prob)
+    baseline_rate = float(np.mean(y_t))
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.plot(recall, precision, color=_PALETTE["neutral"], lw=2, label=f"Model (AP = {ap:.4f})")
+    ax.axhline(y=baseline_rate, color="gray", linestyle="--", label=f"No Skill ({baseline_rate:.2%})")
+    ax.fill_between(recall, precision, alpha=0.1, color=_PALETTE["neutral"])
+    _apply_style(ax, "Precision-Recall Curve", xlabel="Recall", ylabel="Precision")
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 11. Business Economics ─ Cumulative Gains Chart
+# ---------------------------------------------------------------------------
+def plot_cumulative_gains(
+    y_true: np.ndarray | pd.Series,
+    y_prob: np.ndarray,
+    figsize: tuple[int, int] = (6, 5),
+) -> plt.Figure:
+    """
+    Plot Cumulative Gains curve showing % of targets captured vs % of population targeted.
+    """
+    if y_prob.ndim == 2:
+        y_prob = y_prob[:, 1]
+
+    y_t = np.asarray(y_true)
+    order = np.argsort(y_prob)[::-1]
+    y_sorted = y_t[order]
+
+    total_positives = np.sum(y_sorted)
+    if total_positives == 0:
+        total_positives = 1e-10
+
+    cum_gains = np.cumsum(y_sorted) / total_positives
+    percentage_pop = np.linspace(0, 1, len(y_sorted) + 1)
+    cum_gains_plot = np.insert(cum_gains, 0, 0.0)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.plot(percentage_pop * 100, cum_gains_plot * 100, color=_PALETTE["neutral"], lw=2.2, label="Model Gains")
+    ax.plot([0, 100], [0, 100], "k--", alpha=0.6, label="Random Guess (Baseline)")
+
+    # Highlight top 20% point
+    idx_20 = int(len(percentage_pop) * 0.2)
+    gain_at_20 = cum_gains_plot[idx_20] * 100
+    ax.plot(20, gain_at_20, "ro")
+    ax.annotate(
+        f"Top 20% pop -> {gain_at_20:.1f}% targets",
+        xy=(20, gain_at_20),
+        xytext=(28, gain_at_20 - 10),
+        arrowprops=dict(facecolor="black", shrink=0.08, width=1, headwidth=5),
+        fontsize=9,
+        fontweight="bold",
+    )
+
+    _apply_style(ax, "Cumulative Gains Chart", xlabel="% Population Contacted / Screened", ylabel="% Positive Targets Captured")
+    ax.set_xlim([0, 100])
+    ax.set_ylim([0, 105])
+    ax.legend(fontsize=9, loc="lower right")
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 12. Business Economics ─ Lift Curve
+# ---------------------------------------------------------------------------
+def plot_lift_curve(
+    y_true: np.ndarray | pd.Series,
+    y_prob: np.ndarray,
+    n_deciles: int = 10,
+    figsize: tuple[int, int] = (7, 4),
+) -> plt.Figure:
+    """
+    Plot Decile Lift Chart showing performance multiplier over random selection.
+    """
+    if y_prob.ndim == 2:
+        y_prob = y_prob[:, 1]
+
+    y_t = np.asarray(y_true)
+    df_lift = pd.DataFrame({"y": y_t, "prob": y_prob}).sort_values("prob", ascending=False)
+    df_lift["decile"] = pd.qcut(range(len(df_lift)), q=n_deciles, labels=[f"D{i+1}" for i in range(n_deciles)])
+
+    base_rate = df_lift["y"].mean()
+    if base_rate == 0:
+        base_rate = 1e-10
+
+    decile_rates = df_lift.groupby("decile", observed=True)["y"].mean()
+    lifts = decile_rates / base_rate
+
+    fig, ax = plt.subplots(figsize=figsize)
+    bars = ax.bar(lifts.index, lifts.values, color=_PALETTE["neutral"])
+    ax.axhline(y=1.0, color="red", linestyle="--", lw=1.5, label="Random Guess (Lift = 1.0x)")
+
+    for bar, lift in zip(bars, lifts.values, strict=False):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.05, f"{lift:.1f}x", ha="center", fontsize=8.5)
+
+    _apply_style(ax, f"Decile Lift Curve (Base Rate: {base_rate:.2%})", xlabel="Deciles (D1 = Highest Predicted Risk)", ylabel="Lift Multiplier")
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 13. Exploratory Profiling ─ Feature Distribution by Target
+# ---------------------------------------------------------------------------
+def plot_feature_distribution_by_target(
+    df: pd.DataFrame,
+    feature_col: str,
+    target_col: str,
+    figsize: tuple[int, int] = (8, 4),
+) -> plt.Figure:
+    """
+    Distribution comparison (KDE density overlay) of a feature across target classes.
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    classes = sorted(df[target_col].dropna().unique())
+    colors = [_PALETTE["neutral"], _PALETTE["error"], _PALETTE["warn"], _PALETTE["ok"]]
+
+    for i, cls in enumerate(classes):
+        subset = df[df[target_col] == cls][feature_col].dropna()
+        if len(subset) > 1:
+            sns.kdeplot(
+                subset,
+                ax=ax,
+                label=f"{target_col} = {cls}",
+                color=colors[i % len(colors)],
+                fill=True,
+                alpha=0.2,
+                linewidth=1.8,
+            )
+
+    _apply_style(
+        ax,
+        f"Distribution of '{feature_col}' across '{target_col}'",
+        xlabel=feature_col,
+        ylabel="Density",
+    )
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 14. Model Diagnostics ─ Learning Curve
+# ---------------------------------------------------------------------------
+def plot_learning_curve(
+    estimator: Any,
+    X: pd.DataFrame,
+    y: Any,
+    cv: int = 3,
+    figsize: tuple[int, int] = (7, 4.5),
+) -> plt.Figure:
+    """
+    Plot training and validation learning curve to diagnose Underfitting vs Overfitting.
+    """
+    from sklearn.model_selection import learning_curve
+
+    train_sizes, train_scores, val_scores = learning_curve(
+        estimator,
+        X,
+        y,
+        cv=cv,
+        train_sizes=np.linspace(0.2, 1.0, 5),
+        random_state=42,
+    )
+
+    train_mean = np.mean(train_scores, axis=1)
+    train_std = np.std(train_scores, axis=1)
+    val_mean = np.mean(val_scores, axis=1)
+    val_std = np.std(val_scores, axis=1)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.plot(train_sizes, train_mean, "o-", color=_PALETTE["neutral"], label="Training Score")
+    ax.fill_between(train_sizes, train_mean - train_std, train_mean + train_std, alpha=0.15, color=_PALETTE["neutral"])
+
+    ax.plot(train_sizes, val_mean, "s-", color=_PALETTE["ok"], label="Cross-Validation Score")
+    ax.fill_between(train_sizes, val_mean - val_std, val_mean + val_std, alpha=0.15, color=_PALETTE["ok"])
+
+    _apply_style(ax, "Model Learning Curve (Sample Efficiency)", xlabel="Training Examples", ylabel="Score")
+    ax.legend(fontsize=9, loc="lower right")
+    fig.tight_layout()
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 15. Explainable AI ─ SHAP Feature Attribution
+# ---------------------------------------------------------------------------
+def plot_shap_summary(
+    estimator: Any,
+    X_sample: pd.DataFrame,
+    top_n: int = 15,
+    figsize: tuple[int, int] = (9, 5),
+) -> plt.Figure:
+    """
+    Generate SHAP global feature impact bar chart.
+    """
+    import shap
+
+    # Unpack inner model if wrapped
+    model = getattr(estimator, "best_estimator_", estimator)
+    model = getattr(model, "_estimator", model)
+
+    X_clean = X_sample.select_dtypes(include=[np.number]).fillna(0).head(200)
+
+    try:
+        explainer = shap.Explainer(model, X_clean)
+        shap_values = explainer(X_clean)
+        vals = shap_values.values
+        if vals.ndim == 3:  # multiclass / binary with 2 outputs
+            vals = vals[:, :, 1]
+        mean_abs_shap = np.mean(np.abs(vals), axis=0)
+    except Exception:
+        # Fallback to feature importances if TreeExplainer fails
+        importances = getattr(model, "feature_importances_", None)
+        if importances is not None:
+            mean_abs_shap = np.asarray(importances)[: len(X_clean.columns)]
+        else:
+            mean_abs_shap = np.ones(len(X_clean.columns))
+
+    cols = np.array(X_clean.columns)[: len(mean_abs_shap)]
+    idx = np.argsort(mean_abs_shap)[::-1][:top_n]
+    top_cols = cols[idx][::-1]
+    top_vals = mean_abs_shap[idx][::-1]
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.barh(top_cols, top_vals, color=_PALETTE["neutral"])
+    _apply_style(ax, f"SHAP Feature Importance (Mean |SHAP Value|, Top {top_n})", xlabel="Mean |SHAP Value| (Impact on Model Output)")
+    fig.tight_layout()
+    return fig
+
+

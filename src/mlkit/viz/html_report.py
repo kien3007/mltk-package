@@ -1,8 +1,8 @@
 """
 mlkit.viz.html_report
 ~~~~~~~~~~~~~~~~~~~~~
-Standalone, zero-dependency HTML report generator for MLKit pipelines, QC checks,
-model arenas, and drift reports.
+Standalone, interactive multi-tab HTML report dashboard for MLKit pipelines,
+QC checks, model arenas, business curves, and drift reports.
 """
 
 from __future__ import annotations
@@ -27,6 +27,22 @@ def _fig_to_base64(fig: plt.Figure) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
+def _classify_fig_tab(caption: str) -> str:
+    """Classify figure into a dashboard category tab based on caption keywords."""
+    c = caption.lower()
+    if any(k in c for k in ["missing", "distribution", "correlation", "target", "eda", "quality"]):
+        return "tab-eda"
+    if any(k in c for k in ["arena", "benchmark", "learning curve"]):
+        return "tab-arena"
+    if any(k in c for k in ["roc", "precision", "recall", "confusion", "gain", "lift"]):
+        return "tab-business"
+    if any(k in c for k in ["importance", "shap", "calibration", "explain"]):
+        return "tab-xai"
+    if any(k in c for k in ["drift", "psi", "monitor"]):
+        return "tab-drift"
+    return "tab-eda"
+
+
 def generate_html_report(
     reports: Report | list[Report],
     title: str = "MLKit Pipeline Execution Report",
@@ -35,24 +51,7 @@ def generate_html_report(
     output_path: str | Path | None = None,
 ) -> str:
     """
-    Generate a clean, standalone, responsive HTML report.
-
-    Parameters
-    ----------
-    reports : Report or list of Report
-        One or more MLKit Report objects.
-    title : str
-        Report header title.
-    summary_stats : dict, optional
-        Key-value pairs to display as KPI cards (e.g. Data Quality Score, Model Score).
-    figures : list of (caption, Figure), optional
-        Matplotlib figures to embed as base64 images.
-    output_path : str or Path, optional
-        If provided, writes HTML directly to this file.
-
-    Returns
-    -------
-    str : Full HTML document string.
+    Generate an interactive, standalone multi-tab HTML dashboard report.
     """
     report_list = [reports] if not isinstance(reports, list) else reports
 
@@ -69,31 +68,33 @@ def generate_html_report(
                 total_error += 1
 
     overall_status = "error" if total_error > 0 else ("warn" if total_warn > 0 else "ok")
-    status_color = {"ok": "#2ecc71", "warn": "#f39c12", "error": "#e74c3c"}[overall_status]
+    status_color = {"ok": "#10b981", "warn": "#f59e0b", "error": "#ef4444"}[overall_status]
     status_label = {"ok": "PASSED", "warn": "WARNINGS DETECTED", "error": "FAILED / BLOCKED"}[overall_status]
 
-    # Embedded Figures HTML
-    fig_html = ""
+    # Categorize embedded figures into tabs
+    tab_figures: dict[str, list[str]] = {
+        "tab-all": [],
+        "tab-eda": [],
+        "tab-arena": [],
+        "tab-business": [],
+        "tab-xai": [],
+        "tab-drift": [],
+    }
+
     if figures:
-        fig_cards = []
         for caption, fig in figures:
             b64_img = _fig_to_base64(fig)
-            fig_cards.append(f"""
+            card_html = f"""
             <div class="card chart-card">
                 <h3>{caption}</h3>
                 <div class="img-container">
-                    <img src="{b64_img}" alt="{caption}" />
+                    <img src="{b64_img}" alt="{caption}" loading="lazy" />
                 </div>
             </div>
-            """)
-        fig_html = f"""
-        <section class="section">
-            <h2>Visualizations & Diagnostic Plots</h2>
-            <div class="grid-2">
-                {''.join(fig_cards)}
-            </div>
-        </section>
-        """
+            """
+            tab_figures["tab-all"].append(card_html)
+            tab_category = _classify_fig_tab(caption)
+            tab_figures[tab_category].append(card_html)
 
     # KPI Summary Cards HTML
     kpi_cards = [
@@ -104,21 +105,21 @@ def generate_html_report(
         </div>
         """,
         f"""
-        <div class="kpi-card" style="border-top: 4px solid #2ecc71;">
+        <div class="kpi-card" style="border-top: 4px solid #10b981;">
             <span class="kpi-label">Passed Checks</span>
-            <span class="kpi-value" style="color: #2ecc71;">{total_ok}</span>
+            <span class="kpi-value" style="color: #10b981;">{total_ok}</span>
         </div>
         """,
         f"""
-        <div class="kpi-card" style="border-top: 4px solid #f39c12;">
+        <div class="kpi-card" style="border-top: 4px solid #f59e0b;">
             <span class="kpi-label">Warnings</span>
-            <span class="kpi-value" style="color: #f39c12;">{total_warn}</span>
+            <span class="kpi-value" style="color: #f59e0b;">{total_warn}</span>
         </div>
         """,
         f"""
-        <div class="kpi-card" style="border-top: 4px solid #e74c3c;">
+        <div class="kpi-card" style="border-top: 4px solid #ef4444;">
             <span class="kpi-label">Errors</span>
-            <span class="kpi-value" style="color: #e74c3c;">{total_error}</span>
+            <span class="kpi-value" style="color: #ef4444;">{total_error}</span>
         </div>
         """,
     ]
@@ -126,13 +127,13 @@ def generate_html_report(
     if summary_stats:
         for k, v in summary_stats.items():
             kpi_cards.append(f"""
-            <div class="kpi-card" style="border-top: 4px solid #3498db;">
+            <div class="kpi-card" style="border-top: 4px solid #3b82f6;">
                 <span class="kpi-label">{k}</span>
-                <span class="kpi-value" style="color: #2c3e50;">{v}</span>
+                <span class="kpi-value" style="color: #1e293b;">{v}</span>
             </div>
             """)
 
-    # Report Sections HTML
+    # Report Audit Tables HTML
     reports_html = []
     for r in report_list:
         rows = []
@@ -173,6 +174,11 @@ def generate_html_report(
         </div>
         """)
 
+    def _render_tab_grid(cards: list[str], empty_msg: str) -> str:
+        if not cards:
+            return f"<p class='empty-text'>{empty_msg}</p>"
+        return f"<div class='grid-2'>{''.join(cards)}</div>"
+
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -183,13 +189,14 @@ def generate_html_report(
         :root {{
             --bg: #f8fafc;
             --surface: #ffffff;
-            --text-main: #1e293b;
+            --text-main: #0f172a;
             --text-muted: #64748b;
             --border: #e2e8f0;
-            --ok: #2ecc71;
-            --warn: #f39c12;
-            --error: #e74c3c;
-            --primary: #3b82f6;
+            --ok: #10b981;
+            --warn: #f59e0b;
+            --error: #ef4444;
+            --primary: #2563eb;
+            --primary-bg: #eff6ff;
         }}
         * {{
             box-sizing: border-box;
@@ -200,22 +207,26 @@ def generate_html_report(
         body {{
             background-color: var(--bg);
             color: var(--text-main);
-            padding: 2rem 1rem;
+            padding: 2rem 1.5rem;
             line-height: 1.5;
         }}
         .container {{
-            max-width: 1200px;
+            max-width: 1300px;
             margin: 0 auto;
         }}
         header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 2rem;
-            padding-bottom: 1rem;
+            padding-bottom: 1.25rem;
             border-bottom: 2px solid var(--border);
         }}
         header h1 {{
-            font-size: 1.8rem;
-            font-weight: 700;
+            font-size: 1.85rem;
+            font-weight: 800;
             color: var(--text-main);
+            letter-spacing: -0.02em;
         }}
         header p {{
             color: var(--text-muted);
@@ -224,49 +235,79 @@ def generate_html_report(
         }}
         .kpi-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
             gap: 1rem;
             margin-bottom: 2rem;
         }}
         .kpi-card {{
             background: var(--surface);
             padding: 1.25rem;
-            border-radius: 8px;
+            border-radius: 10px;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
             display: flex;
             flex-direction: column;
-            gap: 0.5rem;
+            gap: 0.4rem;
         }}
         .kpi-label {{
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.05em;
             font-weight: 600;
         }}
         .kpi-value {{
-            font-size: 1.8rem;
+            font-size: 1.85rem;
             font-weight: 700;
         }}
-        .section {{
-            margin-bottom: 2.5rem;
+        /* Tab Navigation */
+        .tab-nav {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            background: #e2e8f0;
+            padding: 0.4rem;
+            border-radius: 10px;
         }}
-        .section h2 {{
-            font-size: 1.3rem;
-            margin-bottom: 1rem;
+        .tab-btn {{
+            background: transparent;
+            border: none;
+            outline: none;
+            padding: 0.65rem 1.1rem;
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }}
+        .tab-btn:hover {{
             color: var(--text-main);
+            background: rgba(255, 255, 255, 0.6);
+        }}
+        .tab-btn.active {{
+            background: var(--surface);
+            color: var(--primary);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }}
+        .tab-content {{
+            display: none;
+        }}
+        .tab-content.active {{
+            display: block;
         }}
         .card {{
             background: var(--surface);
-            border-radius: 8px;
+            border-radius: 10px;
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
             padding: 1.5rem;
             margin-bottom: 1.5rem;
         }}
         .card h3 {{
-            font-size: 1.1rem;
+            font-size: 1.15rem;
             margin-bottom: 1rem;
             color: var(--text-main);
+            font-weight: 700;
         }}
         .report-table {{
             width: 100%;
@@ -298,16 +339,16 @@ def generate_html_report(
             letter-spacing: 0.05em;
         }}
         .badge-ok {{
-            background: #d4edda;
-            color: #155724;
+            background: #d1fae5;
+            color: #065f46;
         }}
         .badge-warn {{
-            background: #fff3cd;
-            color: #856404;
+            background: #fef3c7;
+            color: #92400e;
         }}
         .badge-error {{
-            background: #f8d7da;
-            color: #721c24;
+            background: #fee2e2;
+            color: #991b1b;
         }}
         .details {{
             margin-top: 0.35rem;
@@ -316,13 +357,19 @@ def generate_html_report(
         }}
         .grid-2 {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(540px, 1fr));
             gap: 1.5rem;
         }}
         .chart-card img {{
             width: 100%;
             height: auto;
-            border-radius: 4px;
+            border-radius: 6px;
+        }}
+        .empty-text {{
+            color: var(--text-muted);
+            padding: 2rem;
+            text-align: center;
+            font-style: italic;
         }}
         footer {{
             margin-top: 3rem;
@@ -337,25 +384,74 @@ def generate_html_report(
 <body>
     <div class="container">
         <header>
-            <h1>{title}</h1>
-            <p>Generated by MLKit &bull; Standardized Tabular Machine Learning Pipeline Toolkit</p>
+            <div>
+                <h1>{title}</h1>
+                <p>Standardized Tabular Machine Learning Pipeline Toolkit &bull; Verification &amp; Diagnostics</p>
+            </div>
         </header>
 
         <div class="kpi-grid">
             {''.join(kpi_cards)}
         </div>
 
-        {fig_html}
+        <!-- Interactive Tab Navigation -->
+        <nav class="tab-nav">
+            <button class="tab-btn active" onclick="openTab('tab-all')">🖼️ All Visualizations ({len(tab_figures['tab-all'])})</button>
+            <button class="tab-btn" onclick="openTab('tab-eda')">🔍 Data Quality &amp; EDA ({len(tab_figures['tab-eda'])})</button>
+            <button class="tab-btn" onclick="openTab('tab-arena')">⚔️ Model Arena ({len(tab_figures['tab-arena'])})</button>
+            <button class="tab-btn" onclick="openTab('tab-business')">🎯 Business &amp; Decision Curves ({len(tab_figures['tab-business'])})</button>
+            <button class="tab-btn" onclick="openTab('tab-xai')">🧠 Explainability &amp; SHAP ({len(tab_figures['tab-xai'])})</button>
+            <button class="tab-btn" onclick="openTab('tab-drift')">📡 Drift &amp; Stability ({len(tab_figures['tab-drift'])})</button>
+            <button class="tab-btn" onclick="openTab('tab-audit')">📋 Gatekeeper Audit Log</button>
+        </nav>
 
-        <section class="section">
-            <h2>Pipeline Checks & Gatekeeper Audit</h2>
-            {''.join(reports_html)}
-        </section>
+        <!-- Tab Contents -->
+        <div id="tab-all" class="tab-content active">
+            {_render_tab_grid(tab_figures['tab-all'], "No charts provided.")}
+        </div>
+
+        <div id="tab-eda" class="tab-content">
+            {_render_tab_grid(tab_figures['tab-eda'], "No EDA charts in this run.")}
+        </div>
+
+        <div id="tab-arena" class="tab-content">
+            {_render_tab_grid(tab_figures['tab-arena'], "No Model Arena charts in this run.")}
+        </div>
+
+        <div id="tab-business" class="tab-content">
+            {_render_tab_grid(tab_figures['tab-business'], "No Business Decision curves generated.")}
+        </div>
+
+        <div id="tab-xai" class="tab-content">
+            {_render_tab_grid(tab_figures['tab-xai'], "No Explainability / SHAP charts generated.")}
+        </div>
+
+        <div id="tab-drift" class="tab-content">
+            {_render_tab_grid(tab_figures['tab-drift'], "No Drift Monitoring charts generated.")}
+        </div>
+
+        <div id="tab-audit" class="tab-content">
+            <section class="section">
+                {''.join(reports_html)}
+            </section>
+        </div>
 
         <footer>
-            <span>MLKit &copy; Production ML Engine &bull; All calculations verified</span>
+            <span>MLKit Engine &copy; Production Ready &bull; Zero external frontend dependencies</span>
         </footer>
     </div>
+
+    <script>
+        function openTab(tabId) {{
+            // Deactivate all tabs
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            // Activate chosen tab
+            document.getElementById(tabId).classList.add('active');
+            event.currentTarget.classList.add('active');
+        }}
+    </script>
 </body>
 </html>
 """
