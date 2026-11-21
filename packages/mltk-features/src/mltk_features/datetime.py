@@ -23,7 +23,7 @@ class DatetimeFeatures(BaseFrameTransformer):
     ) -> None:
         super().__init__()
         self.columns = columns
-        self.features = features or ["year", "month", "day", "dayofweek", "is_weekend"]
+        self.features = features
         self.drop_original = drop_original
         self.detected_cols_: list[str] = []
 
@@ -51,6 +51,7 @@ class DatetimeFeatures(BaseFrameTransformer):
         if not self.detected_cols_:
             return X.copy()
 
+        active_features = self.features or ["year", "month", "day", "dayofweek", "is_weekend"]
         out = X.copy()
         for col in self.detected_cols_:
             if col not in out.columns:
@@ -58,7 +59,7 @@ class DatetimeFeatures(BaseFrameTransformer):
 
             dt_series = pd.to_datetime(out[col], errors="coerce")
 
-            for feat in self.features:
+            for feat in active_features:
                 col_name = f"{col}_{feat}"
                 if feat == "year":
                     out[col_name] = dt_series.dt.year.fillna(-1).astype(int)

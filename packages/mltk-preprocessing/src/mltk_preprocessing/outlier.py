@@ -22,17 +22,18 @@ class OutlierClipper(BaseFrameTransformer):
         super().__init__()
         self.lower_quantile = lower_quantile
         self.upper_quantile = upper_quantile
-        self.column_overrides = column_overrides or {}
+        self.column_overrides = column_overrides
         self.bounds_: dict[str, tuple[float, float]] = {}
 
     def _fit(self, X: pd.DataFrame, y: Any = None) -> BaseFrameTransformer:
         col_types = infer_column_types(X)
         self.bounds_ = {}
+        overrides = self.column_overrides or {}
 
         for col, ctype in col_types.items():
             if ctype == ColumnType.NUMERIC:
-                if col in self.column_overrides:
-                    l_q, u_q = self.column_overrides[col]
+                if col in overrides:
+                    l_q, u_q = overrides[col]
                 else:
                     l_q, u_q = self.lower_quantile, self.upper_quantile
 

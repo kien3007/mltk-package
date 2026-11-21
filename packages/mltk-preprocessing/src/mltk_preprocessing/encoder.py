@@ -39,7 +39,7 @@ class CategoricalEncoder(BaseFrameTransformer):
         self.low_strategy = low_strategy
         self.mid_strategy = mid_strategy
         self.high_strategy = high_strategy
-        self.column_overrides = column_overrides or {}
+        self.column_overrides = column_overrides
         self.cv = cv
         self.smoothing = smoothing
         self.random_state = random_state
@@ -52,8 +52,9 @@ class CategoricalEncoder(BaseFrameTransformer):
         self.global_target_mean_: float = 0.0
 
     def _determine_strategy(self, col: str, n_unique: int) -> str:
-        if col in self.column_overrides:
-            return self.column_overrides[col]
+        overrides = self.column_overrides or {}
+        if col in overrides:
+            return overrides[col]
         if n_unique <= self.low_card_threshold:
             return self.low_strategy
         elif n_unique <= self.high_card_threshold:

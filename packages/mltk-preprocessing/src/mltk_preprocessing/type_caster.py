@@ -15,7 +15,7 @@ class TypeCaster(BaseFrameTransformer):
 
     def __init__(self, dtypes: dict[str, str | type] | None = None, strip_whitespace: bool = True) -> None:
         super().__init__()
-        self.dtypes = dtypes or {}
+        self.dtypes = dtypes
         self.strip_whitespace = strip_whitespace
 
     def _fit(self, X: pd.DataFrame, y: Any = None) -> BaseFrameTransformer:
@@ -27,7 +27,8 @@ class TypeCaster(BaseFrameTransformer):
             for col in out.select_dtypes(include=["object"]).columns:
                 out[col] = out[col].astype(str).str.strip().replace("nan", pd.NA)
 
-        for col, target_dtype in self.dtypes.items():
+        active_dtypes = self.dtypes or {}
+        for col, target_dtype in active_dtypes.items():
             if col in out.columns:
                 out[col] = out[col].astype(target_dtype)
         return out

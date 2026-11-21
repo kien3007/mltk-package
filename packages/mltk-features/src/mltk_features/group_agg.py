@@ -21,23 +21,28 @@ class GroupAggFeatures(BaseFrameTransformer):
         aggs: list[str] | None = None,
     ) -> None:
         super().__init__()
-        if groupby is None:
-            self.groupby = []
-        else:
-            self.groupby = [groupby] if isinstance(groupby, str) else groupby
-        self.agg_cols = agg_cols or []
-        self.aggs = aggs or ["mean", "std"]
+        self.groupby = groupby
+        self.agg_cols = agg_cols
+        self.aggs = aggs
         self.mappings_: dict[str, pd.DataFrame] = {}
 
     def _fit(self, X: pd.DataFrame, y: Any = None) -> BaseFrameTransformer:
-        valid_group = [c for c in self.groupby if c in X.columns]
-        valid_agg = [c for c in self.agg_cols if c in X.columns]
+        if self.groupby is None:
+            group_list = []
+        else:
+            group_list = [self.groupby] if isinstance(self.groupby, str) else self.groupby
+
+        agg_list = self.agg_cols or []
+        aggs_list = self.aggs or ["mean", "std"]
+
+        valid_group = [c for c in group_list if c in X.columns]
+        valid_agg = [c for c in agg_list if c in X.columns]
 
         if not valid_group or not valid_agg:
             return self
 
         for agg_col in valid_agg:
-            for agg_func in self.aggs:
+            for agg_func in aggs_list:
                 agg_df = X.groupby(valid_group)[agg_col].agg(agg_func).reset_index()
                 feat_name = f"{'_'.join(valid_group)}_grp_{agg_col}_{agg_func}"
                 agg_df.rename(columns={agg_col: feat_name}, inplace=True)
@@ -48,7 +53,12 @@ class GroupAggFeatures(BaseFrameTransformer):
 
     def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
         out = X.copy()
-        valid_group = [c for c in self.groupby if c in out.columns]
+        if self.groupby is None:
+            group_list = []
+        else:
+            group_list = [self.groupby] if isinstance(self.groupby, str) else self.groupby
+
+        valid_group = [c for c in group_list if c in out.columns]
         if not valid_group or not self.mappings_:
             return out
 

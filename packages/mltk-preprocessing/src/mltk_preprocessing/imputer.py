@@ -27,16 +27,17 @@ class MissingImputer(BaseFrameTransformer):
         self.numeric_strategy = numeric_strategy
         self.categorical_strategy = categorical_strategy
         self.fill_value = fill_value
-        self.column_overrides = column_overrides or {}
+        self.column_overrides = column_overrides
         self.statistics_: dict[str, Any] = {}
 
     def _fit(self, X: pd.DataFrame, y: Any = None) -> BaseFrameTransformer:
         col_types = infer_column_types(X)
         self.statistics_ = {}
+        overrides = self.column_overrides or {}
 
         for col, ctype in col_types.items():
-            if col in self.column_overrides:
-                override = self.column_overrides[col]
+            if col in overrides:
+                override = overrides[col]
                 if isinstance(override, str) and override == "median":
                     val = X[col].median()
                 elif isinstance(override, str) and override == "mean":
