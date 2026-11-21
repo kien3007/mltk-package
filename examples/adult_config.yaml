@@ -1,0 +1,16 @@
+# Task configuration for Adult Census Classification
+task_type: classification
+target: class
+id_col: null
+time_col: null
+group_col: null
+seed: 42
+
+test_size: 0.2
+cv_folds: 5
+stratify: true
+
+quality_gate: true
+baseline_gate: true
+
+data_path: examples/data/adult.csv
