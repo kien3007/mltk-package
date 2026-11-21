@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
 import numpy as np
 import pandas as pd
-
 from mltk_core.base import ColumnType, infer_column_types
 from mltk_core.check import Check, CheckResult
 
@@ -39,7 +37,7 @@ class MissingValueCheck(Check):
                 name=self.name,
                 level="WARNING",
                 passed=False,
-                message=f"{len(high_missing_cols)} columns have > {int(self.col_threshold*100)}% missing values: {list(high_missing_cols.keys())}",
+                message=f"{len(high_missing_cols)} columns have > {int(self.col_threshold * 100)}% missing values: {list(high_missing_cols.keys())}",
                 details=details,
             )
         return CheckResult(
@@ -183,7 +181,7 @@ class TargetDistributionCheck(Check):
                     name=self.name,
                     level="WARNING",
                     passed=False,
-                    message=f"Severe class imbalance: minority class is only {min_pct*100:.1f}% (threshold {self.min_class_pct*100}%).",
+                    message=f"Severe class imbalance: minority class is only {min_pct * 100:.1f}% (threshold {self.min_class_pct * 100}%).",
                     details=details,
                 )
             return CheckResult(
@@ -224,11 +222,15 @@ class LeakageCheck(Check):
 
     def run(self, df: pd.DataFrame) -> CheckResult:
         if self.target is None:
-            return CheckResult(name=self.name, level="INFO", passed=True, message="No target provided.")
+            return CheckResult(
+                name=self.name, level="INFO", passed=True, message="No target provided."
+            )
 
         y = pd.to_numeric(self.target, errors="coerce")
         if y.isnull().all():
-            return CheckResult(name=self.name, level="INFO", passed=True, message="Target is non-numeric.")
+            return CheckResult(
+                name=self.name, level="INFO", passed=True, message="Target is non-numeric."
+            )
 
         col_types = infer_column_types(df)
         leaked_cols: dict[str, float] = {}

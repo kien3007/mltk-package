@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from typing import Any
+
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
-
 from mltk_core.base import BaseFrameTransformer, ColumnType, infer_column_types
+from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
 
 
 class SHAPSelector(BaseFrameTransformer):
@@ -57,9 +57,13 @@ class SHAPSelector(BaseFrameTransformer):
         # Fit simple surrogate tree
         n_unique_y = len(np.unique(sample_y[~pd.isna(sample_y)]))
         if n_unique_y <= 20:
-            model = ExtraTreesClassifier(n_estimators=30, max_depth=5, random_state=self.random_state)
+            model = ExtraTreesClassifier(
+                n_estimators=30, max_depth=5, random_state=self.random_state
+            )
         else:
-            model = ExtraTreesRegressor(n_estimators=30, max_depth=5, random_state=self.random_state)
+            model = ExtraTreesRegressor(
+                n_estimators=30, max_depth=5, random_state=self.random_state
+            )
 
         model.fit(sample_df, sample_y)
 
@@ -81,9 +85,7 @@ class SHAPSelector(BaseFrameTransformer):
             if mean_abs_shap.ndim > 1:
                 mean_abs_shap = np.mean(mean_abs_shap, axis=1)
 
-            sorted_pairs = sorted(
-                zip(usable_cols, mean_abs_shap), key=lambda x: x[1], reverse=True
-            )
+            sorted_pairs = sorted(zip(usable_cols, mean_abs_shap), key=lambda x: x[1], reverse=True)
             self.shap_importances_ = {col: float(imp) for col, imp in sorted_pairs}
 
         except Exception:

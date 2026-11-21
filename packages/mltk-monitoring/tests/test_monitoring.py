@@ -2,8 +2,6 @@
 
 import numpy as np
 import pandas as pd
-import pytest
-
 from mltk_monitoring import (
     DataDriftMonitor,
     PerformanceMonitor,

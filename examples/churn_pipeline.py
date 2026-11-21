@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import tempfile
+
 import numpy as np
 import pandas as pd
-
 from mltk_core import Pipeline, split_data
 from mltk_features import DatetimeFeatures, RatioFeatures
 from mltk_modelling import LGBMTrainer, load_artifact, save_artifact
@@ -31,7 +31,9 @@ def create_sample_churn_dataset(n_samples: int = 1000) -> pd.DataFrame:
     missing_mask = np.random.rand(n_samples) < 0.05
     tenure[missing_mask] = np.nan
 
-    contract = np.random.choice(["Month-to-month", "One year", "Two year"], size=n_samples, p=[0.55, 0.25, 0.20])
+    contract = np.random.choice(
+        ["Month-to-month", "One year", "Two year"], size=n_samples, p=[0.55, 0.25, 0.20]
+    )
     payment_method = np.random.choice(
         ["Electronic check", "Mailed check", "Bank transfer", "Credit card"],
         size=n_samples,
@@ -102,6 +104,7 @@ def run_pipeline() -> None:
     test_preds = pipe.predict(X_test)
     test_probs = pipe.predict_proba(X_test)[:, 1]
     from sklearn.metrics import roc_auc_score
+
     test_auc = float(roc_auc_score(y_test, test_probs))
     print(f"Pipeline fitted successfully! Test AUC: {test_auc:.4f}")
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import (
@@ -80,7 +81,9 @@ class CVEvaluator:
         y_arr = np.asarray(y)
         unique_targets = np.unique(y_arr[~pd.isna(y_arr)])
         is_classification = (
-            len(unique_targets) <= 2 if self.task_type == "auto" else self.task_type == "classification"
+            len(unique_targets) <= 2
+            if self.task_type == "auto"
+            else self.task_type == "classification"
         )
         task_label = "classification" if is_classification else "regression"
 
@@ -108,7 +111,11 @@ class CVEvaluator:
             probs = None
             if is_classification and hasattr(fold_est, "predict_proba"):
                 prob_arr = fold_est.predict_proba(X_val)
-                probs = prob_arr[:, 1] if prob_arr.ndim == 2 and prob_arr.shape[1] > 1 else prob_arr.ravel()
+                probs = (
+                    prob_arr[:, 1]
+                    if prob_arr.ndim == 2 and prob_arr.shape[1] > 1
+                    else prob_arr.ravel()
+                )
                 if oof_probs is not None:
                     oof_probs[val_idx] = probs
 

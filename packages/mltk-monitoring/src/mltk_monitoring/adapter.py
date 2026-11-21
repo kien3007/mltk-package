@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
 import pandas as pd
-
 from mltk_core.check import CheckResult, Report
 
 
@@ -18,6 +16,7 @@ class EvidentlyDriftAdapter:
         self._is_available: bool = False
         try:
             import evidently  # noqa: F401
+
             self._is_available = True
         except ImportError:
             self._is_available = False

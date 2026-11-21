@@ -1,10 +1,9 @@
 """Unit tests for mltk-modelling."""
 
 import tempfile
+
 import numpy as np
 import pandas as pd
-import pytest
-
 from mltk_modelling import CVEvaluator, LGBMTrainer, load_artifact, save_artifact
 
 

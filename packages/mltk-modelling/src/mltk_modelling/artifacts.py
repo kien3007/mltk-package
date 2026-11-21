@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Any
+
 import numpy as np
 import pandas as pd
-from sklearn.pipeline import Pipeline
-
 from mltk_core.base import ColumnType, infer_column_types
 from mltk_core.metadata import ArtifactMetadata, compute_data_hash
+
 from mltk_modelling.model_card import generate_model_card
 
 
@@ -30,7 +29,9 @@ def compute_reference_statistics(df: pd.DataFrame) -> dict[str, Any]:
                 "std": float(s.std()) if not s.empty else 0.0,
                 "min": float(s.min()) if not s.empty else 0.0,
                 "max": float(s.max()) if not s.empty else 0.0,
-                "quantiles": [float(q) for q in np.percentile(s, np.linspace(0, 100, 11))] if not s.empty else [],
+                "quantiles": [float(q) for q in np.percentile(s, np.linspace(0, 100, 11))]
+                if not s.empty
+                else [],
             }
         elif ctype == ColumnType.CATEGORICAL:
             counts = s.astype(str).value_counts(normalize=True).head(50).to_dict()
@@ -62,20 +63,17 @@ def save_artifact(
     out_path.mkdir(parents=True, exist_ok=True)
 
     # 1. Save pipeline using skops if possible, fallback to joblib
-    pipeline_saved = False
     pipeline_file = out_path / "pipeline.skops"
     try:
         import skops.io as sio
 
         sio.dump(pipeline, str(pipeline_file))
-        pipeline_saved = True
     except Exception:
         # Fallback to joblib
         import joblib
 
         pipeline_file = out_path / "pipeline.joblib"
         joblib.dump(pipeline, str(pipeline_file))
-        pipeline_saved = True
 
     # 2. Extract feature names and input schema
     input_schema = {str(c): str(t.value) for c, t in infer_column_types(X_train).items()}
@@ -114,7 +112,9 @@ def save_artifact(
     # 6. Model card
     generate_model_card(
         model_name=model_name,
-        task_type="classification" if y_train is not None and len(np.unique(y_train)) <= 2 else "regression",
+        task_type="classification"
+        if y_train is not None and len(np.unique(y_train)) <= 2
+        else "regression",
         metrics=final_metrics,
         features=final_features,
         metadata=metadata,
@@ -127,7 +127,13 @@ def save_artifact(
             import mlflow
 
             with mlflow.start_run(run_name=model_name):
-                mlflow.log_params({"model_name": model_name, "random_state": random_state, "git_sha": metadata.git_sha})
+                mlflow.log_params(
+                    {
+                        "model_name": model_name,
+                        "random_state": random_state,
+                        "git_sha": metadata.git_sha,
+                    }
+                )
                 for k, v in final_metrics.items():
                     if isinstance(v, (int, float)):
                         mlflow.log_metric(k, float(v))

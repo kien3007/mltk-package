@@ -5,9 +5,9 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 from typing import Any
+
 import chardet
 import pandas as pd
-
 from mltk_core.exceptions import SchemaError
 
 
@@ -23,7 +23,7 @@ def detect_encoding(filepath: str | Path, sample_size: int = 65536) -> str:
 
 def detect_delimiter(filepath: str | Path, encoding: str, sample_size: int = 8192) -> str:
     """Sniff the CSV delimiter from the first sample bytes."""
-    with open(filepath, "r", encoding=encoding, errors="replace") as f:
+    with open(filepath, encoding=encoding, errors="replace") as f:
         sample = f.read(sample_size)
     if not sample:
         return ","

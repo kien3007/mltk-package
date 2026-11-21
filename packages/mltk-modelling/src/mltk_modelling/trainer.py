@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
-
 from mltk_core.base import ColumnType, infer_column_types
 from mltk_core.exceptions import NotFittedError
+from sklearn.base import BaseEstimator
 
 
 class LGBMTrainer(BaseEstimator):

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import KFold, StratifiedKFold
-
 from mltk_core.base import BaseFrameTransformer, ColumnType, infer_column_types
+from sklearn.model_selection import KFold, StratifiedKFold
 
 
 class CategoricalEncoder(BaseFrameTransformer):
@@ -81,19 +81,29 @@ class CategoricalEncoder(BaseFrameTransformer):
             if strat == "onehot":
                 self.onehot_categories_[col] = unique_vals
             elif strat == "ordinal":
-                self.ordinal_mappings_[col] = {val: idx for idx, val in enumerate(unique_vals, start=1)}
+                self.ordinal_mappings_[col] = {
+                    val: idx for idx, val in enumerate(unique_vals, start=1)
+                }
             elif strat == "target":
                 if y is None:
                     # Fallback to ordinal if target not provided during fit
                     self.column_strategies_[col] = "ordinal"
-                    self.ordinal_mappings_[col] = {val: idx for idx, val in enumerate(unique_vals, start=1)}
+                    self.ordinal_mappings_[col] = {
+                        val: idx for idx, val in enumerate(unique_vals, start=1)
+                    }
                 else:
                     # Empirical smoothed target encoding
-                    stats = pd.DataFrame({"cat": s, "y": y_arr}).groupby("cat")["y"].agg(["count", "mean"])
+                    stats = (
+                        pd.DataFrame({"cat": s, "y": y_arr})
+                        .groupby("cat")["y"]
+                        .agg(["count", "mean"])
+                    )
                     counts = stats["count"]
                     means = stats["mean"]
                     # Empirical Bayes smoothing: (count * mean + smoothing * global_mean) / (count + smoothing)
-                    smoothed = (counts * means + self.smoothing * self.global_target_mean_) / (counts + self.smoothing)
+                    smoothed = (counts * means + self.smoothing * self.global_target_mean_) / (
+                        counts + self.smoothing
+                    )
                     self.target_mappings_[col] = smoothed.to_dict()
 
         return self
@@ -116,7 +126,10 @@ class CategoricalEncoder(BaseFrameTransformer):
                 kf = KFold(n_splits=self.cv, shuffle=True, random_state=self.random_state)
                 splits = kf.split(X)
 
-            oof_encodings = {col: np.full(len(X), fill_value=self.global_target_mean_, dtype=float) for col in target_cols}
+            oof_encodings = {
+                col: np.full(len(X), fill_value=self.global_target_mean_, dtype=float)
+                for col in target_cols
+            }
 
             for train_idx, val_idx in splits:
                 X_train_fold = X.iloc[train_idx]
@@ -125,10 +138,16 @@ class CategoricalEncoder(BaseFrameTransformer):
 
                 for col in target_cols:
                     s_train = X_train_fold[col].astype(str)
-                    stats = pd.DataFrame({"cat": s_train, "y": y_train_fold}).groupby("cat")["y"].agg(["count", "mean"])
+                    stats = (
+                        pd.DataFrame({"cat": s_train, "y": y_train_fold})
+                        .groupby("cat")["y"]
+                        .agg(["count", "mean"])
+                    )
                     counts = stats["count"]
                     means = stats["mean"]
-                    smoothed = (counts * means + self.smoothing * global_mean_fold) / (counts + self.smoothing)
+                    smoothed = (counts * means + self.smoothing * global_mean_fold) / (
+                        counts + self.smoothing
+                    )
                     mapping = smoothed.to_dict()
 
                     # Apply to validation fold

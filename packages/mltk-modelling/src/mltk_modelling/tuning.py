@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
+
 import pandas as pd
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 
@@ -44,7 +46,9 @@ class OptunaSearch:
         def objective(trial: optuna.Trial) -> float:
             params = self.param_distributions(trial)
             est = self.estimator_factory(params)
-            cv_strat = StratifiedKFold(n_splits=self.cv, shuffle=True, random_state=self.random_state)
+            cv_strat = StratifiedKFold(
+                n_splits=self.cv, shuffle=True, random_state=self.random_state
+            )
             scores = cross_val_score(est, X, y, cv=cv_strat, scoring=self.scoring)
             return float(scores.mean())
 

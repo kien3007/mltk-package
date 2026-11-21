@@ -5,9 +5,9 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any
-import uuid
 
 _CURRENT_RUN_ID: contextvars.ContextVar[str] = contextvars.ContextVar(
     "mltk_current_run_id", default=""

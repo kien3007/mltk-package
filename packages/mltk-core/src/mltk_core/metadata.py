@@ -91,6 +91,6 @@ class ArtifactMetadata:
 
     @classmethod
     def load(cls, filepath: str) -> ArtifactMetadata:
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             data = json.load(f)
         return cls(**data)

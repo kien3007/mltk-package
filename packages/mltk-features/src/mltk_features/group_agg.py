@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from typing import Any
-import pandas as pd
 
+import pandas as pd
 from mltk_core.base import BaseFrameTransformer
 
 

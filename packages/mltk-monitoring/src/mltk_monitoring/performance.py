@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
 import numpy as np
-import pandas as pd
-
 from mltk_core.check import CheckResult, Report
+
 from mltk_monitoring.drift import calculate_psi
 
 
@@ -54,7 +52,9 @@ class PerformanceMonitor:
     Monitor production metrics degradation compared to training baseline.
     """
 
-    def __init__(self, baseline_metrics: dict[str, float], degradation_threshold: float = 0.1) -> None:
+    def __init__(
+        self, baseline_metrics: dict[str, float], degradation_threshold: float = 0.1
+    ) -> None:
         self.baseline_metrics = baseline_metrics
         self.degradation_threshold = degradation_threshold
 
@@ -77,8 +77,14 @@ class PerformanceMonitor:
             }
 
             # If metric is higher-is-better (like roc_auc, accuracy, f1)
-            higher_is_better = any(m in metric_name for m in ["auc", "acc", "f1", "r2", "prec", "rec"])
-            degraded = (pct_change < -self.degradation_threshold) if higher_is_better else (pct_change > self.degradation_threshold)
+            higher_is_better = any(
+                m in metric_name for m in ["auc", "acc", "f1", "r2", "prec", "rec"]
+            )
+            degraded = (
+                (pct_change < -self.degradation_threshold)
+                if higher_is_better
+                else (pct_change > self.degradation_threshold)
+            )
 
             if degraded:
                 results.append(
@@ -86,7 +92,7 @@ class PerformanceMonitor:
                         name=f"perf_{metric_name}",
                         level="WARNING",
                         passed=False,
-                        message=f"Performance degradation on {metric_name}: baseline={base_val:.4f}, current={curr_val:.4f} ({pct_change*100:+.1f}%)",
+                        message=f"Performance degradation on {metric_name}: baseline={base_val:.4f}, current={curr_val:.4f} ({pct_change * 100:+.1f}%)",
                         details=details,
                     )
                 )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -20,7 +21,9 @@ class Pipeline(SklearnPipeline):
     Fully compatible with scikit-learn, with built-in logging and progress visibility.
     """
 
-    def __init__(self, steps: list[tuple[str, Any]], *, memory: Any = None, verbose: bool = False) -> None:
+    def __init__(
+        self, steps: list[tuple[str, Any]], *, memory: Any = None, verbose: bool = False
+    ) -> None:
         super().__init__(steps=steps, memory=memory, verbose=verbose)
 
     def fit(self, X: pd.DataFrame | np.ndarray, y: Any = None, **fit_params: Any) -> Pipeline:
@@ -33,7 +36,9 @@ class Pipeline(SklearnPipeline):
     def transform(self, X: pd.DataFrame | np.ndarray) -> pd.DataFrame | np.ndarray:
         return super().transform(X)
 
-    def fit_transform(self, X: pd.DataFrame | np.ndarray, y: Any = None, **fit_params: Any) -> pd.DataFrame | np.ndarray:
+    def fit_transform(
+        self, X: pd.DataFrame | np.ndarray, y: Any = None, **fit_params: Any
+    ) -> pd.DataFrame | np.ndarray:
         return super().fit_transform(X, y, **fit_params)
 
 

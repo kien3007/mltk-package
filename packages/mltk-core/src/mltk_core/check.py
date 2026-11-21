@@ -49,7 +49,9 @@ class Check(ABC):
 class Report:
     """Aggregated report of multiple checks."""
 
-    def __init__(self, results: list[CheckResult] | None = None, title: str = "Quality & Validation Report") -> None:
+    def __init__(
+        self, results: list[CheckResult] | None = None, title: str = "Quality & Validation Report"
+    ) -> None:
         self.results: list[CheckResult] = results or []
         self.title: str = title
         self.created_at: str = datetime.now(timezone.utc).isoformat()
@@ -111,7 +113,9 @@ class Report:
 
         rows_html = []
         for r in self.results:
-            badge_color = "#10b981" if r.passed else ("#ef4444" if r.level == "ERROR" else "#f59e0b")
+            badge_color = (
+                "#10b981" if r.passed else ("#ef4444" if r.level == "ERROR" else "#f59e0b")
+            )
             status_text = "PASS" if r.passed else "FAIL"
             details_str = json.dumps(r.details, indent=2, default=str) if r.details else "-"
             rows_html.append(
@@ -146,7 +150,7 @@ class Report:
             <div>{status_badge}</div>
         </div>
         <p style="color:#6b7280; margin: 6px 0 0 0; font-size:13px;">Generated at: {self.created_at}</p>
-        
+
         <div class="stats">
             <div class="stat-box"><div class="stat-val">{summary["total_checks"]}</div><div style="color:#6b7280; font-size:13px;">Total Checks</div></div>
             <div class="stat-box"><div class="stat-val" style="color:#ef4444;">{summary["errors"]}</div><div style="color:#6b7280; font-size:13px;">Errors</div></div>
@@ -158,7 +162,7 @@ class Report:
                 <tr><th>Check Name</th><th>Status</th><th>Level</th><th>Message</th><th>Details</th></tr>
             </thead>
             <tbody>
-                {''.join(rows_html)}
+                {"".join(rows_html)}
             </tbody>
         </table>
     </div>
@@ -169,5 +173,11 @@ class Report:
     def raise_if_failed(self) -> None:
         """Raise SchemaError if any error-level check failed."""
         if self.has_errors:
-            failed_msgs = [f"[{r.name}] {r.message}" for r in self.results if r.level == "ERROR" and not r.passed]
-            raise SchemaError(f"Validation failed with {len(failed_msgs)} errors:\n" + "\n".join(failed_msgs))
+            failed_msgs = [
+                f"[{r.name}] {r.message}"
+                for r in self.results
+                if r.level == "ERROR" and not r.passed
+            ]
+            raise SchemaError(
+                f"Validation failed with {len(failed_msgs)} errors:\n" + "\n".join(failed_msgs)
+            )

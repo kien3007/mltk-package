@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import os
-import numpy as np
 
+import numpy as np
 from mltk_core import Pipeline, split_data
-from mltk_features import RatioFeatures
 from mltk_modelling import CVEvaluator, LGBMTrainer, load_artifact, save_artifact
 from mltk_monitoring import DataDriftMonitor
 from mltk_preprocessing import (
@@ -25,8 +24,14 @@ from mltk_selection import (
 )
 
 
-def run_titanic_pipeline() -> None:
-    csv_path = r"C:\Users\kienn\Downloads\Titanic-Dataset.csv"
+def run_titanic_pipeline(csv_path: str | None = None) -> None:
+    if csv_path is None:
+        local_path = r"C:\Users\kienn\Downloads\Titanic-Dataset.csv"
+        csv_path = local_path if os.path.exists(local_path) else "Titanic-Dataset.csv"
+
+    if not os.path.exists(csv_path):
+        print(f"Không tìm thấy file tại '{csv_path}'. Bỏ qua chạy ví dụ.")
+        return
     print(f"=== Bước 1: Đọc dữ liệu Titanic qua mltk-qc: {csv_path} ===")
     df = read_csv(csv_path)
     print(f"Kích thước dataset: {df.shape[0]} dòng, {df.shape[1]} cột")
@@ -127,7 +132,7 @@ def run_titanic_pipeline() -> None:
 
     test_acc = accuracy_score(y_test, test_preds)
     test_auc = roc_auc_score(y_test, test_probs)
-    print(f"Test Accuracy: {test_acc:.4f} ({test_acc*100:.2f}%)")
+    print(f"Test Accuracy: {test_acc:.4f} ({test_acc * 100:.2f}%)")
     print(f"Test ROC-AUC:  {test_auc:.4f}")
     print("\nBáo cáo phân loại chi tiết (Classification Report):")
     print(classification_report(y_test, test_preds, target_names=["Died", "Survived"]))
@@ -158,14 +163,14 @@ def run_titanic_pipeline() -> None:
     loaded_pipe, metadata = load_artifact(artifact_dir)
     loaded_preds = loaded_pipe.predict(X_test)
     np.testing.assert_array_equal(test_preds, loaded_preds)
-    print(f"✅ Dự đoán của model tải từ artifact khớp 100%!")
+    print("✅ Dự đoán của model tải từ artifact khớp 100%!")
     print(f"   Git SHA: {metadata.git_sha}")
     print(f"   Data Hash: {metadata.data_hash}")
 
     # Bước 9: Giám sát Data Drift trên dữ liệu mới
     print("\n=== Bước 9: Khởi tạo Data Drift Monitor từ Artifact ===")
     monitor = DataDriftMonitor.from_artifact(artifact_dir)
-    
+
     # Giả lập dữ liệu mới phục vụ inference
     drift_report = monitor.evaluate(X_test)
     print(f"Kiểm tra Data Drift trên batch kiểm thử: Passed = {drift_report.passed}")

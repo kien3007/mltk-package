@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.metadata
 from typing import Any
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -33,7 +34,11 @@ def get_registered_transformers() -> list[tuple[str, Any]]:
     transformers = []
     try:
         eps = importlib.metadata.entry_points()
-        group_eps = eps.select(group="mltk.transformers") if hasattr(eps, "select") else eps.get("mltk.transformers", [])
+        group_eps = (
+            eps.select(group="mltk.transformers")
+            if hasattr(eps, "select")
+            else eps.get("mltk.transformers", [])
+        )
         for ep in group_eps:
             try:
                 cls = ep.load()
@@ -50,7 +55,9 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     if "transformer_entry" in metafunc.fixturenames:
         entries = get_registered_transformers()
         if entries:
-            metafunc.parametrize("transformer_entry", [e[1] for e in entries], ids=[e[0] for e in entries])
+            metafunc.parametrize(
+                "transformer_entry", [e[1] for e in entries], ids=[e[0] for e in entries]
+            )
         else:
             # Fallback when entry-points haven't been installed in pip/uv yet
             metafunc.parametrize("transformer_entry", [])

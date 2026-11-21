@@ -1,7 +1,6 @@
 """Unit tests for mltk-features."""
 
 import pandas as pd
-
 from mltk_features import DatetimeFeatures, GroupAggFeatures, RatioFeatures
 
 
@@ -38,7 +37,9 @@ def test_ratio_features():
 
 
 def test_group_agg_features():
-    train_df = pd.DataFrame({"city": ["NY", "NY", "SF", "SF"], "sales": [100.0, 200.0, 300.0, 400.0]})
+    train_df = pd.DataFrame(
+        {"city": ["NY", "NY", "SF", "SF"], "sales": [100.0, 200.0, 300.0, 400.0]}
+    )
     test_df = pd.DataFrame({"city": ["NY", "SF", "LA"], "sales": [50.0, 60.0, 70.0]})
 
     agg = GroupAggFeatures(groupby="city", agg_cols=["sales"], aggs=["mean"])

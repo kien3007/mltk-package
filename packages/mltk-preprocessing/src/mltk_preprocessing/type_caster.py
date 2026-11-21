@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from typing import Any
-import pandas as pd
 
+import pandas as pd
 from mltk_core.base import BaseFrameTransformer
 
 
@@ -13,7 +13,9 @@ class TypeCaster(BaseFrameTransformer):
     Ensure column datatypes conform to declared types and strip whitespace on strings.
     """
 
-    def __init__(self, dtypes: dict[str, str | type] | None = None, strip_whitespace: bool = True) -> None:
+    def __init__(
+        self, dtypes: dict[str, str | type] | None = None, strip_whitespace: bool = True
+    ) -> None:
         super().__init__()
         self.dtypes = dtypes
         self.strip_whitespace = strip_whitespace

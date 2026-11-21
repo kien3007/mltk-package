@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+
 import numpy as np
 import pandas as pd
-
 from mltk_core.base import BaseFrameTransformer, ColumnType, infer_column_types
 
 
@@ -88,7 +88,9 @@ class CorrelationFilter(BaseFrameTransformer):
     Remove collinear numerical features whose pairwise correlation exceeds threshold.
     """
 
-    def __init__(self, threshold: float = 0.95, method: Literal["pearson", "spearman"] = "pearson") -> None:
+    def __init__(
+        self, threshold: float = 0.95, method: Literal["pearson", "spearman"] = "pearson"
+    ) -> None:
         super().__init__()
         self.threshold = threshold
         self.method = method
@@ -183,7 +185,9 @@ class StabilityFilter(BaseFrameTransformer):
         col_types = infer_column_types(X)
         for col in X.columns:
             if col in self.val_df.columns and col_types.get(col) == ColumnType.NUMERIC:
-                psi = self.calculate_psi(X[col].values.astype(float), self.val_df[col].values.astype(float))
+                psi = self.calculate_psi(
+                    X[col].values.astype(float), self.val_df[col].values.astype(float)
+                )
                 self.psi_values_[col] = psi
                 if psi > self.threshold_psi:
                     self.dropped_features_.append(col)

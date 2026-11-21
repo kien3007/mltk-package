@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+
 import numpy as np
 import pandas as pd
-
 from mltk_core.base import BaseFrameTransformer, ColumnType, infer_column_types
 
 
@@ -58,7 +58,9 @@ class RatioFeatures(BaseFrameTransformer):
             ratio_name = f"{num_col}_ratio_{den_col}"
             with np.errstate(divide="ignore", invalid="ignore"):
                 ratio_vals = num_vals / den_vals
-                ratio_vals = ratio_vals.replace([np.inf, -np.inf], self.fill_inf).fillna(self.fill_inf)
+                ratio_vals = ratio_vals.replace([np.inf, -np.inf], self.fill_inf).fillna(
+                    self.fill_inf
+                )
             out[ratio_name] = ratio_vals.astype(float)
 
             # Difference: num - den

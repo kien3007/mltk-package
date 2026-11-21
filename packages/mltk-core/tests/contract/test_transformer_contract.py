@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-
-from mltk_core.exceptions import NotFittedError, SchemaError
+from mltk_core.exceptions import NotFittedError
 
 
 def test_fit_transform_returns_dataframe(transformer_entry, sample_df, sample_y):

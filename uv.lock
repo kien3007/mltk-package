@@ -3112,6 +3112,7 @@ dependencies = [
     { name = "mltk-qc" },
     { name = "mltk-selection" },
     { name = "pytest" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -3124,6 +3125,7 @@ requires-dist = [
     { name = "mltk-qc", editable = "packages/mltk-qc" },
     { name = "mltk-selection", editable = "packages/mltk-selection" },
     { name = "pytest", specifier = ">=7.0.0" },
+    { name = "ruff", specifier = ">=0.1.0" },
 ]
 
 [[package]]

@@ -1,10 +1,9 @@
 """End-to-end integration test across all MLTK packages."""
 
 import tempfile
+
 import numpy as np
 import pandas as pd
-from sklearn.pipeline import Pipeline
-
 from mltk_features import DatetimeFeatures, RatioFeatures
 from mltk_modelling import LGBMTrainer, load_artifact, save_artifact
 from mltk_monitoring import DataDriftMonitor
@@ -16,6 +15,7 @@ from mltk_preprocessing import (
 )
 from mltk_qc import run_qc
 from mltk_selection import CorrelationFilter, ModelImportanceSelector
+from sklearn.pipeline import Pipeline
 
 
 def test_full_mltk_pipeline_integration():

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from typing import Any
-import pandas as pd
 
+import pandas as pd
 from mltk_core.check import Check, Report
+
 from mltk_qc.checks import (
     ConstantColumnCheck,
     DuplicateCheck,

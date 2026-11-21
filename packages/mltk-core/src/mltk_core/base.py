@@ -25,7 +25,7 @@ class ColumnType(str, Enum):
 def infer_column_types(df: pd.DataFrame) -> dict[str, ColumnType]:
     """
     Infer semantic types for all columns in a pandas DataFrame.
-    
+
     Returns a mapping of column name to ColumnType (NUMERIC, CATEGORICAL, DATETIME, OTHER).
     """
     col_types: dict[str, ColumnType] = {}
@@ -37,7 +37,11 @@ def infer_column_types(df: pd.DataFrame) -> dict[str, ColumnType]:
             col_types[str(col)] = ColumnType.NUMERIC
         elif pd.api.types.is_datetime64_any_dtype(dtype):
             col_types[str(col)] = ColumnType.DATETIME
-        elif isinstance(dtype, pd.CategoricalDtype) or pd.api.types.is_object_dtype(dtype) or pd.api.types.is_bool_dtype(dtype):
+        elif (
+            isinstance(dtype, pd.CategoricalDtype)
+            or pd.api.types.is_object_dtype(dtype)
+            or pd.api.types.is_bool_dtype(dtype)
+        ):
             col_types[str(col)] = ColumnType.CATEGORICAL
         else:
             col_types[str(col)] = ColumnType.OTHER
@@ -93,7 +97,9 @@ class BaseFrameTransformer(BaseEstimator, TransformerMixin, ABC):
     def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """Internal transform implementation. Must be implemented by subclasses."""
 
-    def fit_transform(self, X: pd.DataFrame | np.ndarray, y: Any = None, **fit_params: Any) -> pd.DataFrame:
+    def fit_transform(
+        self, X: pd.DataFrame | np.ndarray, y: Any = None, **fit_params: Any
+    ) -> pd.DataFrame:
         """Fit to data, then transform it. Subclasses can override _fit_transform for optimizations."""
         df = self._ensure_dataframe(X)
         if hasattr(self, "_fit_transform"):
@@ -124,7 +130,10 @@ class BaseFrameTransformer(BaseEstimator, TransformerMixin, ABC):
             if X.ndim == 1:
                 X = X.reshape(-1, 1)
             # Use cached feature names if dimension matches
-            if getattr(self, "_feature_names_in", None) and len(self._feature_names_in) == X.shape[1]:
+            if (
+                getattr(self, "_feature_names_in", None)
+                and len(self._feature_names_in) == X.shape[1]
+            ):
                 cols = self._feature_names_in
             else:
                 cols = [f"x{i}" for i in range(X.shape[1])]

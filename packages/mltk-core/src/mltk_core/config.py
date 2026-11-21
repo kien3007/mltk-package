@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class MltkBaseSettings(BaseSettings):
     """
     Base settings class for MLTK components.
-    
+
     Supports:
     - Default attributes defined in class
     - YAML configuration loading

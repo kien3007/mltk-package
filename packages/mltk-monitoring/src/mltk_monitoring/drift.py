@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+
 import numpy as np
 import pandas as pd
-from scipy import stats
-
 from mltk_core.base import BaseMonitor, ColumnType, infer_column_types
 from mltk_core.check import CheckResult, Report
+from scipy import stats
 
 
 def calculate_psi(expected: np.ndarray, actual: np.ndarray, num_buckets: int = 10) -> float:
@@ -36,9 +35,7 @@ def calculate_psi(expected: np.ndarray, actual: np.ndarray, num_buckets: int = 1
     return float(psi)
 
 
-def calculate_categorical_psi(
-    expected_props: dict[str, float], actual_series: pd.Series
-) -> float:
+def calculate_categorical_psi(expected_props: dict[str, float], actual_series: pd.Series) -> float:
     """Calculate PSI between baseline categorical proportions and current series."""
     actual_counts = actual_series.astype(str).value_counts(normalize=True).to_dict()
     all_keys = set(expected_props.keys()).union(set(actual_counts.keys()))
@@ -93,7 +90,7 @@ class DataDriftMonitor(BaseMonitor):
         if not stats_file.exists():
             raise FileNotFoundError(f"reference_stats.json not found in {artifact_dir}")
 
-        with open(stats_file, "r", encoding="utf-8") as f:
+        with open(stats_file, encoding="utf-8") as f:
             raw_stats = json.load(f)
 
         monitor = cls()
@@ -141,7 +138,11 @@ class DataDriftMonitor(BaseMonitor):
                 # Kolmogorov-Smirnov 2-sample test
                 ks_stat, ks_p = stats.ks_2samp(ref_vals, curr_vals)
 
-                details = {"psi": round(psi_val, 4), "ks_statistic": round(ks_stat, 4), "ks_pvalue": round(ks_p, 4)}
+                details = {
+                    "psi": round(psi_val, 4),
+                    "ks_statistic": round(ks_stat, 4),
+                    "ks_pvalue": round(ks_p, 4),
+                }
 
                 if psi_val >= self.psi_critical:
                     results.append(

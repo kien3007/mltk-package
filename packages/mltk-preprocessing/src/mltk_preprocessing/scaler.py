@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from typing import Any, Literal
-import pandas as pd
-from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
 
+import pandas as pd
 from mltk_core.base import BaseFrameTransformer, ColumnType, infer_column_types
+from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
 
 
 class FeatureScaler(BaseFrameTransformer):

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from typing import Any
+
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
-
 from mltk_core.base import BaseFrameTransformer, ColumnType, infer_column_types
+from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
 
 
 class ModelImportanceSelector(BaseFrameTransformer):
@@ -60,9 +60,7 @@ class ModelImportanceSelector(BaseFrameTransformer):
         est.fit(X_numeric, y_arr)
         raw_importances = est.feature_importances_
 
-        sorted_pairs = sorted(
-            zip(usable_cols, raw_importances), key=lambda x: x[1], reverse=True
-        )
+        sorted_pairs = sorted(zip(usable_cols, raw_importances), key=lambda x: x[1], reverse=True)
         self.importances_ = {col: float(imp) for col, imp in sorted_pairs}
 
         if self.top_k is not None:

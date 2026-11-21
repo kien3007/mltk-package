@@ -1,12 +1,12 @@
 """Unit tests for MLTK Core functionality."""
 
 import json
+
 import pandas as pd
 import pytest
-
 from mltk_core.base import ColumnType, infer_column_types
 from mltk_core.check import CheckResult, Report
-from mltk_core.contract import define_schema, validate_contract, ContractViolation
+from mltk_core.contract import ContractViolation, define_schema, validate_contract
 from mltk_core.exceptions import SchemaError
 from mltk_core.logging import get_logger, get_run_id, set_run_id
 from mltk_core.metadata import ArtifactMetadata, compute_data_hash
@@ -57,7 +57,7 @@ def test_report_logic():
 
 
 def test_logging_and_run_id():
-    run_1 = set_run_id("test-run-123")
+    set_run_id("test-run-123")
     assert get_run_id() == "test-run-123"
 
     logger = get_logger("test_logger")
