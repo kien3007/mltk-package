@@ -35,30 +35,10 @@ mlkit = "mlkit.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/mlkit"]
 
-[tool.uv.workspace]
-members = [
-    "packages/mltk-core",
-    "packages/mltk-qc",
-    "packages/mltk-preprocessing",
-    "packages/mltk-features",
-    "packages/mltk-selection",
-    "packages/mltk-modelling",
-    "packages/mltk-monitoring",
-]
-
-[tool.uv.sources]
-mltk-core = { workspace = true }
-mltk-qc = { workspace = true }
-mltk-preprocessing = { workspace = true }
-mltk-features = { workspace = true }
-mltk-selection = { workspace = true }
-mltk-modelling = { workspace = true }
-mltk-monitoring = { workspace = true }
-
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q --import-mode=importlib"
-testpaths = ["tests", "packages"]
+testpaths = ["tests"]
 pythonpath = ["src"]
 python_files = ["test_*.py"]
 
