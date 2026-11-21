@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import os
 import numpy as np
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
 
+from mltk_core import Pipeline, split_data
 from mltk_features import RatioFeatures
 from mltk_modelling import CVEvaluator, LGBMTrainer, load_artifact, save_artifact
 from mltk_monitoring import DataDriftMonitor
@@ -46,19 +44,22 @@ def run_titanic_pipeline() -> None:
         status_icon = "✅" if r.passed else ("❌" if r.level == "ERROR" else "⚠️")
         print(f"  {status_icon} [{r.name}]: {r.message}")
 
-    # Bước 3: Tách X và y, phân chia Train/Test
-    print("\n=== Bước 3: Phân chia Train / Test (80/20 có Stratify) ===")
+    # Bước 3: Tách X và y, phân chia Train/Test bằng mltk_core.split_data
+    print("\n=== Bước 3: Phân chia Train / Test tự động qua mltk_core.split_data ===")
     # Loại bỏ PassengerId (ID định danh)
-    X = df.drop(columns=["Survived", "PassengerId"])
-    y = df["Survived"]
+    df_clean = df.drop(columns=["PassengerId"])
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.20, stratify=y, random_state=42
+    X_train, X_test, y_train, y_test = split_data(
+        df_clean,
+        target="Survived",
+        test_size=0.20,
+        stratify=True,
+        random_state=42,
     )
     print(f"Train size: {X_train.shape}, Test size: {X_test.shape}")
 
-    # Bước 4: Lắp ráp sklearn Pipeline hoàn chỉnh với các thành phần của MLTK
-    print("\n=== Bước 4: Lắp ráp Pipeline biến đổi và huấn luyện ===")
+    # Bước 4: Lắp ráp Pipeline biến đổi và huấn luyện
+    print("\n=== Bước 4: Lắp ráp mltk_core.Pipeline ===")
     pipe = Pipeline(
         [
             ("type_caster", TypeCaster()),

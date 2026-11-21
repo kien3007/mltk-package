@@ -5,9 +5,8 @@ from __future__ import annotations
 import tempfile
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
 
+from mltk_core import Pipeline, split_data
 from mltk_features import DatetimeFeatures, RatioFeatures
 from mltk_modelling import LGBMTrainer, load_artifact, save_artifact
 from mltk_monitoring import DataDriftMonitor
@@ -68,12 +67,9 @@ def run_pipeline() -> None:
     df = create_sample_churn_dataset(n_samples=600)
     print(f"Dataset shape: {df.shape}")
 
-    # Explicit convention: separate X and y
-    X = df.drop(columns=["churn"])
-    y = df["churn"]
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, stratify=y, random_state=42
+    # Explicit convention: separate X and y via split_data
+    X_train, X_test, y_train, y_test = split_data(
+        df, target="churn", test_size=0.20, stratify=True, random_state=42
     )
 
     print("\n=== Step 2: Quality Control & Validation ===")

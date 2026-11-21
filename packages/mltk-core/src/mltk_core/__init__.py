@@ -19,6 +19,7 @@ from mltk_core.exceptions import (
 )
 from mltk_core.logging import get_logger, get_run_id, set_run_id
 from mltk_core.metadata import ArtifactMetadata, compute_data_hash, get_git_sha
+from mltk_core.pipeline import Pipeline, split_data
 
 __version__ = "0.1.0"
 
@@ -34,6 +35,7 @@ __all__ = [
     "MltkBaseSettings",
     "MltkError",
     "NotFittedError",
+    "Pipeline",
     "Report",
     "SchemaError",
     "compute_data_hash",
@@ -43,5 +45,6 @@ __all__ = [
     "get_run_id",
     "infer_column_types",
     "set_run_id",
+    "split_data",
     "validate_contract",
 ]
