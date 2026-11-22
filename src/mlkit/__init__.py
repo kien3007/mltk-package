@@ -17,7 +17,7 @@ from mlkit.core.report import Report
 from mlkit.core.step import BaseStep
 from mlkit.qc_eda.qc import QualityCheckStep, run_qc
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "BaseStep",

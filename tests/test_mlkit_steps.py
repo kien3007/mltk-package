@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from mlkit.core.errors import QualityGateError
+from mlkit.core.errors import BaselineComparisonError, QualityGateError
 from mlkit.features import BinningFeatures, DatetimeFeatures, GroupAggFeatures, RatioFeatures
 from mlkit.modelling import (
     DummyTrainer,
@@ -164,7 +164,7 @@ def test_arena_baseline_gate_failure():
     X = pd.DataFrame({"f1": [1.0, 2.0, 3.0, 4.0]})
     y = [1, 1, 1, 1]  # degenerate
     arena = ModelArena(cv=2, enforce_baseline_gate=True)
-    with pytest.raises(Exception):
+    with pytest.raises((BaselineComparisonError, ValueError)):
         arena.fit(X, y)
 
 

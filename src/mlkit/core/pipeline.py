@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -29,25 +30,55 @@ class Pipeline(BaseEstimator):
     def named_steps(self) -> dict[str, Any]:
         return dict(self.steps)
 
+    @staticmethod
+    def _accepts(fn: Any, param: str) -> bool:
+        try:
+            sig = inspect.signature(fn)
+        except (TypeError, ValueError):
+            return False
+        return param in sig.parameters or any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+
     def fit(
         self,
         X: pd.DataFrame,
         y: Any = None,
         cfg: TaskConfig | None = None,
+        **fit_params: Any,
     ) -> Pipeline:
-        """Fit all steps sequentially on DataFrame."""
+        """Fit all steps sequentially on DataFrame.
+
+        Intermediate steps are fitted with ``fit_transform`` so that steps which
+        produce out-of-fold training outputs (e.g. target encoding) can do so.
+        Extra keyword arguments are routed sklearn-style: ``<step>__<param>=value``.
+        """
         current_X = X.copy() if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
         self.feature_names_in_ = [str(c) for c in current_X.columns]
 
+        routed: dict[str, dict[str, Any]] = {name: {} for name, _ in self.steps}
+        for key, value in fit_params.items():
+            step_name, sep, param = key.partition("__")
+            if not sep or step_name not in routed:
+                raise ValueError(f"Invalid fit parameter '{key}'. Use '<step>__<param>'.")
+            routed[step_name][param] = value
+
         for i, (name, step) in enumerate(self.steps):
             is_last = i == len(self.steps) - 1
+            kwargs = dict(routed[name])
+
+            if not is_last and hasattr(step, "fit_transform"):
+                if self._accepts(step.fit_transform, "cfg"):
+                    kwargs["cfg"] = cfg
+                current_X = step.fit_transform(current_X, y, **kwargs)
+                if not isinstance(current_X, pd.DataFrame):
+                    current_X = pd.DataFrame(current_X)
+                continue
 
             if hasattr(step, "fit"):
-                # Pass cfg if supported
-                try:
-                    step.fit(current_X, y, cfg=cfg)
-                except TypeError:
-                    step.fit(current_X, y)
+                if self._accepts(step.fit, "cfg"):
+                    kwargs["cfg"] = cfg
+                step.fit(current_X, y, **kwargs)
 
             if not is_last and hasattr(step, "transform"):
                 current_X = step.transform(current_X)
@@ -61,7 +92,7 @@ class Pipeline(BaseEstimator):
             raise NotFittedError("Pipeline is not fitted yet.")
 
         current_X = X.copy() if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
-        for i, (name, step) in enumerate(self.steps):
+        for i, (_name, step) in enumerate(self.steps):
             is_last = i == len(self.steps) - 1
             if not is_last and hasattr(step, "transform"):
                 current_X = step.transform(current_X)
@@ -92,7 +123,7 @@ class Pipeline(BaseEstimator):
     def report(self) -> Report:
         """Aggregate reports across all constituent steps."""
         master_report = Report(title="Pipeline Execution Report")
-        for name, step in self.steps:
+        for _name, step in self.steps:
             if hasattr(step, "report_") and isinstance(step.report_, Report):
                 master_report.merge(step.report_)
         return master_report
@@ -121,8 +152,9 @@ class Pipeline(BaseEstimator):
         X_sample: pd.DataFrame | None = None,
         baseline: dict[str, Any] | None = None,
         metrics: dict[str, Any] | None = None,
+        report: Report | None = None,
     ) -> Path:
-        """Save this pipeline bundle to disk."""
+        """Save this pipeline bundle to disk (the aggregated step report is included)."""
         return save_bundle(
             self,
             path=path,
@@ -130,6 +162,7 @@ class Pipeline(BaseEstimator):
             X_sample=X_sample,
             baseline=baseline,
             metrics=metrics,
+            report=report if report is not None else self.report(),
         )
 
     @classmethod

@@ -6,7 +6,7 @@ from typing import Any
 
 import pandas as pd
 
-from mlkit.core.config import TaskConfig
+from mlkit.core.config import TaskConfig, TaskType
 from mlkit.core.errors import BaselineComparisonError
 from mlkit.core.registry import register
 from mlkit.core.step import BaseStep
@@ -16,7 +16,10 @@ from mlkit.modelling.trainers import (
     LGBMTrainer,
     LinearTrainer,
     RandomForestTrainer,
+    XGBTrainer,
 )
+
+DEFAULT_CANDIDATES = ("linear", "random_forest", "lightgbm")
 
 
 @register("modelling.arena")
@@ -31,36 +34,74 @@ class ModelArena(BaseStep):
         enforce_baseline_gate: bool = True,
         models: dict[str, Any] | None = None,
         random_state: int = 42,
+        candidates: list[str] | tuple[str, ...] | None = None,
     ) -> None:
         super().__init__()
         self.cv = cv
         self.enforce_baseline_gate = enforce_baseline_gate
-        self.custom_models = models
+        self.models = models
         self.random_state = random_state
+        self.candidates = candidates
 
         self.best_model_name_: str = ""
         self.best_estimator_: Any = None
         self.comparison_table_: pd.DataFrame = pd.DataFrame()
 
-    def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> ModelArena:
-        task_type = cfg.task_type if cfg else "classification"
+    @property
+    def custom_models(self) -> dict[str, Any] | None:
+        """Backward-compatible alias of ``models``."""
+        return self.models
+
+    def _build_zoo(self, task_type: TaskType) -> dict[str, Any]:
+        rs = self.random_state
+        factories = {
+            "linear": ("Linear Model", lambda: LinearTrainer(task_type=task_type, random_state=rs)),
+            "random_forest": (
+                "Random Forest",
+                lambda: RandomForestTrainer(task_type=task_type, random_state=rs),
+            ),
+            "lightgbm": ("LightGBM", lambda: LGBMTrainer(task_type=task_type, random_state=rs)),
+            "xgboost": ("XGBoost", lambda: XGBTrainer(task_type=task_type, random_state=rs)),
+        }
+        zoo: dict[str, Any] = {"Baseline (Dummy)": DummyTrainer(task_type=task_type)}
+        for key in self.candidates if self.candidates is not None else DEFAULT_CANDIDATES:
+            if key not in factories:
+                raise ValueError(f"Unknown arena candidate '{key}'. Options: {sorted(factories)}")
+            if key == "xgboost":
+                import importlib.util
+
+                if importlib.util.find_spec("xgboost") is None:
+                    self.report_.add("arena_candidates", "warn", "xgboost not installed; skipped.")
+                    continue
+            label, factory = factories[key]
+            zoo[label] = factory()
+        if self.models:
+            zoo.update(self.models)
+        if len(zoo) < 2:
+            raise ValueError("ModelArena needs at least one candidate besides the baseline.")
+        return zoo
+
+    def _fit(
+        self,
+        X: pd.DataFrame,
+        y: Any = None,
+        cfg: TaskConfig | None = None,
+        groups: Any = None,
+        time_index: Any = None,
+    ) -> ModelArena:
+        task_type: TaskType = cfg.task_type if cfg else "classification"
         evaluator = CVEvaluator(cv=self.cv, task_type=task_type, random_state=self.random_state)
 
         # 1. Establish Model Zoo
-        zoo: dict[str, Any] = {}
-        zoo["Baseline (Dummy)"] = DummyTrainer(task_type=task_type)
-        zoo["Linear Model"] = LinearTrainer(task_type=task_type, random_state=self.random_state)
-        zoo["Random Forest"] = RandomForestTrainer(task_type=task_type, random_state=self.random_state)
-        zoo["LightGBM"] = LGBMTrainer(task_type=task_type, random_state=self.random_state)
-
-        if self.custom_models:
-            zoo.update(self.custom_models)
+        zoo = self._build_zoo(task_type)
+        self.cv_results_: dict[str, dict[str, Any]] = {}
 
         records = []
         eval_scores = {}
 
         for name, model in zoo.items():
-            res = evaluator.evaluate(model, X, y, cfg=cfg)
+            res = evaluator.evaluate(model, X, y, cfg=cfg, groups=groups, time_index=time_index)
+            self.cv_results_[name] = res
             score = res["primary_score"]
             eval_scores[name] = (score, model)
 

@@ -121,7 +121,7 @@ class MutualInformationSelector(BaseStep):
         else:
             mi = mutual_info_regression(X_num, y_arr, random_state=self.random_state)
 
-        ranked = sorted(zip(num_cols, mi), key=lambda x: x[1], reverse=True)
+        ranked = sorted(zip(num_cols, mi, strict=False), key=lambda x: x[1], reverse=True)
         self.scores_ = {c: float(s) for c, s in ranked}
         chosen = [c for c, _ in ranked[: self.top_k]]
         non_num = [c for c in X.columns if c not in num_cols]
@@ -172,7 +172,7 @@ class ModelImportanceSelector(BaseStep):
         )
         est.fit(X_num, y_arr)
 
-        sorted_pairs = sorted(zip(num_cols, est.feature_importances_), key=lambda x: x[1], reverse=True)
+        sorted_pairs = sorted(zip(num_cols, est.feature_importances_, strict=False), key=lambda x: x[1], reverse=True)
         self.importances_ = {c: float(v) for c, v in sorted_pairs}
 
         if self.top_k is not None:

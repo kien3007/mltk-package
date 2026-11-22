@@ -12,100 +12,168 @@
 
 ## 1. Cài đặt nhanh
 
-Yêu cầu: Python >= 3.10 (Khuyến nghị 3.11 hoặc 3.12 với [uv](https://github.com/astral-sh/uv)).
+Yêu cầu: Python >= 3.10 (khuyến nghị 3.11 hoặc 3.12 với [uv](https://github.com/astral-sh/uv)).
 
 ```bash
-# Cài đặt thư viện ở chế độ editable
-pip install -e .
-
-# Hoặc dùng uv:
-uv sync --all-packages
+pip install -e .                 # chỉ phần lõi (pandas, sklearn, lightgbm, ...)
+pip install -e ".[all]"          # toàn bộ tính năng tùy chọn
+uv sync --all-extras             # môi trường phát triển (kèm nhóm dev)
 ```
+
+| Extra | Nội dung |
+|---|---|
+| `xgboost` | Ứng viên XGBoost trong Model Arena |
+| `viz` | Biểu đồ, HTML report (`matplotlib`, `seaborn`, `plotly`) |
+| `explain` | SHAP |
+| `tuning` | Tối ưu siêu tham số bằng Optuna |
+| `tracking` | Ghi log thí nghiệm lên MLflow |
+| `serve` | REST API bằng FastAPI + Uvicorn |
+| `io` | Đọc/ghi Parquet, Excel |
 
 ---
 
 ## 2. Cấu trúc thư viện
 
 ```text
-mlkit/
-├─ pyproject.toml               # Cấu hình dự án, dependencies, CLI entrypoint
-├─ src/mlkit/
-│  ├─ core/                     # config (TaskConfig), step (BaseStep), report, pipeline, registry, bundle, errors
-│  ├─ qc_eda/                   # Kiểm định chất lượng dữ liệu và EDA
-│  ├─ preprocessing/            # Imputer, Scaler, Encoder, RareCategoryGrouper, OutlierClipper
-│  ├─ features/                 # Datetime, Ratio, GroupAgg, Binning
-│  ├─ selection/                # Variance, Correlation, MutualInfo, ModelImportance
-│  ├─ modelling/                # Zoo (Dummy, Linear, RF, LightGBM, XGBoost, SklearnWrapper), CVEvaluator, Arena
-│  ├─ monitoring/               # DriftMonitor, exact PSI calculation, KS-test, Chi-square
-│  └─ cli.py                    # Giao diện dòng lệnh (CLI): mlkit run / mlkit monitor
-├─ tests/                       # Unit tests và kiểm thử trường hợp biên
-├─ examples/                    # Ví dụ thực thi trên 2 dataset chuẩn
-│  ├─ data/                     # Adult Census và California Housing
-│  ├─ adult_config.yaml         # Config phân loại (Classification)
-│  ├─ adult_classification.py   # Script pipeline phân loại
-│  ├─ housing_config.yaml       # Config hồi quy (Regression)
-│  └─ california_regression.py # Script pipeline hồi quy
-└─ README.md
+src/mlkit/
+├─ core/            # config, step, pipeline, registry, bundle, report, log (JSON logging + run_id)
+├─ qc_eda/          # Kiểm định chất lượng dữ liệu và EDA
+├─ preprocessing/   # TypeCaster, Imputer, Encoder (OOF target encoding), Scaler, ...
+├─ features/        # Datetime, Ratio, GroupAgg, Binning, MultiTableAggregator
+├─ selection/       # Variance, Correlation, MutualInfo, ModelImportance
+├─ modelling/       # Zoo, CVEvaluator (Stratified/Group/TimeSeries), Arena, Optuna, Calibration
+├─ monitoring/      # DriftMonitor: PSI, KS, Chi-square 2 mẫu, prediction drift
+├─ viz/             # Biểu đồ chẩn đoán + HTML dashboard
+├─ runner.py        # train / predict / monitor dạng hàm Python
+├─ serving.py       # FastAPI app (extra `serve`)
+├─ tracking.py      # MLflow (extra `tracking`)
+└─ cli.py           # mlkit run | predict | monitor | serve | steps
 ```
 
 ---
 
 ## 3. Chạy qua dòng lệnh (CLI)
 
-Thư viện tích hợp sẵn lệnh CLI `mlkit run`:
-
 ```bash
-# 1. Chạy bài toán phân loại trên Adult Census
-mlkit run examples/adult_config.yaml --out ./artifacts/adult_bundle
+# Huấn luyện + đánh giá holdout + lưu bundle + HTML report
+mlkit run examples/adult_config.yaml --out ./artifacts/adult --html-report ./artifacts/adult.html
 
-# 2. Chạy bài toán hồi quy trên California Housing
-mlkit run examples/housing_config.yaml --out ./artifacts/housing_bundle
+# Dự đoán cho batch mới (csv / parquet / json / xlsx)
+mlkit predict ./artifacts/adult new_data.csv --out preds.csv --threshold 0.5
 
-# 3. Giám sát data drift cho một batch dữ liệu mới
-mlkit monitor ./artifacts/adult_bundle examples/data/adult.csv
+# Giám sát drift so với baseline đã lưu trong bundle
+mlkit monitor ./artifacts/adult new_data.csv --out drift.html --fail-on warn
+
+# Phục vụ model qua REST API (cần extra `serve`)
+mlkit serve ./artifacts/adult --port 8000
+
+# Liệt kê các step có thể dùng trong YAML
+mlkit steps
 ```
+
+Cờ chung: `-v` (debug), `-q` (chỉ cảnh báo/lỗi), `--log-json` (log JSON mỗi dòng, có `run_id`, theo ADR-002).
+
+Mã thoát: `0` thành công · `1` lỗi dữ liệu/cấu hình hoặc không đạt `metric_thresholds` · `2` phát hiện drift (`monitor`).
+
+### Cấu hình YAML đầy đủ
+
+```yaml
+task_type: classification        # classification (nhị phân) | regression
+target: class
+id_col: null                     # bị loại khỏi đặc trưng
+time_col: null                   # nếu có: holdout theo thời gian + TimeSeriesSplit trong CV
+group_col: null                  # nếu có: tách train/test theo nhóm + GroupKFold, cột bị loại khỏi đặc trưng
+seed: 42
+test_size: 0.2
+cv_folds: 5
+quality_gate: true
+baseline_gate: true
+data_path: examples/data/adult.csv
+
+metric_thresholds:               # cổng phát hành trên tập holdout
+  roc_auc: 0.85
+modelling:
+  candidates: [linear, random_forest, lightgbm, xgboost]
+  positive_label: ">50K"
+monitoring:                      # tham số của DriftMonitor
+  psi_threshold_warn: 0.1
+  psi_threshold_error: 0.2
+tracking:
+  mlflow: true
+  experiment: adult-income
+
+# Tùy chọn: tự định nghĩa pipeline bằng các khóa trong registry (xem `mlkit steps`)
+steps:
+  - {name: qc, step: qc.quality_check}
+  - {name: dates, step: features.datetime}
+  - {name: types, step: preprocessing.type_caster}
+  - {name: imputer, step: preprocessing.imputer, params: {add_indicator: true}}
+  - {name: encoder, step: preprocessing.categorical_encoder}
+  - {name: arena, step: modelling.arena, params: {candidates: [linear, lightgbm]}}
+```
+
+### Nội dung bundle
+
+`pipeline.joblib`, `config.yaml`, `schema.json`, `baseline.json` (baseline drift dạng JSON), `metrics.json` (CV, holdout và khoảng tin cậy bootstrap), `report.json`, `versions.json`, `manifest.json` (SHA256 của từng file, được kiểm tra khi load).
+
+> ⚠️ `joblib`/pickle có thể thực thi mã tùy ý khi load. Chỉ load bundle từ nguồn tin cậy. Checksum giúp phát hiện file bị hỏng hoặc bị sửa, nhưng không thay thế được việc tin cậy nguồn.
+
+### REST API
+
+| Endpoint | Mô tả |
+|---|---|
+| `GET /health` | Trạng thái và model champion |
+| `GET /metadata` | Config, schema, metrics, versions |
+| `POST /predict` | `{"records": [...], "threshold": 0.5}` |
+| `POST /monitor` | `{"records": [...]}`: báo cáo drift cho batch |
 
 ---
 
 ## 4. Sử dụng trong Python Code
 
 ```python
-import pandas as pd
+from mlkit.core import TaskConfig
+from mlkit.runner import train, predict_bundle, monitor_bundle, read_table
+
+cfg = TaskConfig.from_yaml("examples/adult_config.yaml")
+result = train(cfg, read_table(cfg.data_path), output_dir="./artifacts/adult")
+print(result.metrics["champion"], result.metrics["holdout"])
+
+preds = predict_bundle("./artifacts/adult", read_table("new_data.csv"))
+report = monitor_bundle("./artifacts/adult", read_table("new_data.csv"))
+print(report.summary())
+```
+
+Hoặc tự lắp pipeline:
+
+```python
 from mlkit.core import TaskConfig, Pipeline
-from mlkit.qc_eda import QualityCheckStep
+from mlkit.features import DatetimeFeatures
 from mlkit.preprocessing import TypeCaster, MissingImputer, CategoricalEncoder, FeatureScaler
-from mlkit.selection import VarianceFilter, CorrelationFilter
 from mlkit.modelling import ModelArena
 
-# 1. Khai báo config
-cfg = TaskConfig(task_type="classification", target="income", cv_folds=5, seed=42)
-
-# 2. Lắp ráp pipeline
+cfg = TaskConfig(task_type="classification", target="income", group_col="customer_id")
 pipeline = Pipeline([
-    ("qc", QualityCheckStep(enforce_gate=True)),
-    ("type_caster", TypeCaster()),
+    ("dates", DatetimeFeatures()),
+    ("types", TypeCaster()),
     ("imputer", MissingImputer()),
-    ("encoder", CategoricalEncoder()),
+    ("encoder", CategoricalEncoder()),   # target encoding out-of-fold khi fit
     ("scaler", FeatureScaler()),
-    ("variance", VarianceFilter()),
-    ("corr", CorrelationFilter()),
-    ("modelling", ModelArena(cv=5, enforce_baseline_gate=True)),
+    ("arena", ModelArena(cv=5, candidates=["linear", "lightgbm"])),
 ])
-
-# 3. Fit và chọn model tối ưu tự động
-pipeline.fit(X_train, y_train, cfg=cfg)
-
-# 4. Dự đoán và xuất bundle
-preds = pipeline.predict(X_test)
-pipeline.save(path="./artifacts/my_model_bundle", cfg=cfg)
+# fit params được route theo kiểu sklearn: <step>__<param>
+pipeline.fit(X_train, y_train, cfg=cfg, arena__groups=X_train["customer_id"])
 ```
 
 ---
 
-## 5. Chạy Kiểm thử (Test Suite)
-
-Thư viện bao phủ đầy đủ unit tests cho cả 6 giai đoạn và các trường hợp biên:
+## 5. Phát triển và kiểm thử
 
 ```bash
-uv run pytest -v
+uv sync --all-extras
+uv run pytest                       # kèm cổng coverage >= 80%
+uv run ruff check src tests examples
+uv run mypy src/mlkit
 ```
+
+Xem [CHANGELOG.md](CHANGELOG.md) để biết các thay đổi theo phiên bản.

@@ -32,15 +32,18 @@ class DatetimeFeatures(BaseStep):
         if self.columns:
             self.detected_cols_ = [c for c in self.columns if c in X.columns]
         else:
-            self.detected_cols_ = list(X.select_dtypes(include=["datetime64"]).columns)
-            # Check string/object candidates
-            for c in X.select_dtypes(include=["object"]).columns:
-                if "date" in c.lower() or "time" in c.lower():
-                    try:
-                        pd.to_datetime(X[c].dropna().head(10))
+            self.detected_cols_ = list(X.select_dtypes(include=["datetime64", "datetimetz"]).columns)
+            time_col = cfg.time_col if cfg else None
+            # Check string/object/category candidates (by name hint or configured time_col)
+            for c in X.select_dtypes(include=["object", "category", "string"]).columns:
+                name = str(c).lower()
+                if c == time_col or "date" in name or "time" in name:
+                    sample = X[c].dropna().astype(str).head(50)
+                    if sample.empty:
+                        continue
+                    parsed = pd.to_datetime(sample, errors="coerce", format="mixed")
+                    if parsed.notna().mean() >= 0.9:
                         self.detected_cols_.append(c)
-                    except Exception:
-                        pass
 
         self.report_.add(
             "datetime_features",
@@ -133,7 +136,7 @@ class GroupAggFeatures(BaseStep):
                 if num_targets:
                     agg_df = X.groupby(g, observed=True)[num_targets].agg(self.aggregations)
                     # Flatten multi-index
-                    agg_df.columns = [f"{g}_{col}_{stat}" for col, stat in agg_df.columns]
+                    agg_df.columns = [f"{g}_{col}_{stat}" for col, stat in agg_df.columns.to_flat_index()]
                     self.lookup_tables_[g] = agg_df
 
         self.report_.add(
@@ -185,7 +188,7 @@ class BinningFeatures(BaseStep):
         out = X.copy()
         for c, edges in self.bin_edges_.items():
             if c in out.columns and len(edges) > 1:
-                out[f"{c}_bin"] = pd.cut(out[c], bins=edges, labels=False, include_lowest=True).fillna(-1).astype(int)
+                out[f"{c}_bin"] = pd.cut(out[c], bins=list(edges), labels=False, include_lowest=True).fillna(-1).astype(int)
         return out
 
 

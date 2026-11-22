@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -145,10 +145,13 @@ class OptunaSearch(BaseStep):
         optuna.logging.set_verbosity(optuna.logging.WARNING)
 
         task_type = cfg.task_type if cfg else "classification"
+        direction: Literal["maximize", "minimize"]
         if self.direction is None:
             direction = "maximize" if task_type == "classification" else "minimize"
+        elif self.direction in ("maximize", "minimize"):
+            direction = "maximize" if self.direction == "maximize" else "minimize"
         else:
-            direction = self.direction
+            raise ValueError(f"direction must be 'maximize' or 'minimize', got {self.direction!r}")
 
         y_arr = np.asarray(y)
 

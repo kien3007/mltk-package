@@ -498,8 +498,8 @@ def plot_calibration_curve(
         xlabel="Mean Predicted Probability",
         ylabel="Fraction of Positives",
     )
-    ax.set_xlim([0.0, 1.0])
-    ax.set_ylim([0.0, 1.0])
+    ax.set_xlim((0.0, 1.0))
+    ax.set_ylim((0.0, 1.0))
     ax.legend(fontsize=9)
     fig.tight_layout()
     return fig
@@ -531,8 +531,8 @@ def plot_precision_recall_curve(
     ax.axhline(y=baseline_rate, color="gray", linestyle="--", label=f"No Skill ({baseline_rate:.2%})")
     ax.fill_between(recall, precision, alpha=0.1, color=_PALETTE["neutral"])
     _apply_style(ax, "Precision-Recall Curve", xlabel="Recall", ylabel="Precision")
-    ax.set_xlim([0.0, 1.0])
-    ax.set_ylim([0.0, 1.05])
+    ax.set_xlim((0.0, 1.0))
+    ax.set_ylim((0.0, 1.05))
     ax.legend(fontsize=9)
     fig.tight_layout()
     return fig
@@ -582,8 +582,8 @@ def plot_cumulative_gains(
     )
 
     _apply_style(ax, "Cumulative Gains Chart", xlabel="% Population Contacted / Screened", ylabel="% Positive Targets Captured")
-    ax.set_xlim([0, 100])
-    ax.set_ylim([0, 105])
+    ax.set_xlim((0, 100))
+    ax.set_ylim((0, 105))
     ax.legend(fontsize=9, loc="lower right")
     fig.tight_layout()
     return fig
@@ -676,7 +676,7 @@ def plot_learning_curve(
     X: pd.DataFrame,
     y: Any,
     cv: int = 3,
-    figsize: tuple[int, int] = (7, 4.5),
+    figsize: tuple[float, float] = (7, 4.5),
 ) -> plt.Figure:
     """
     Plot training and validation learning curve to diagnose Underfitting vs Overfitting.

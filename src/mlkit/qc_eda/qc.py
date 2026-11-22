@@ -10,6 +10,7 @@ from scipy.stats import spearmanr
 
 from mlkit.core.config import TaskConfig
 from mlkit.core.registry import register
+from mlkit.core.report import Severity
 from mlkit.core.step import BaseStep
 
 
@@ -156,7 +157,7 @@ class QualityCheckStep(BaseStep):
         if self.report_.has_errors:
             score -= 25.0
         self.data_quality_score_ = float(max(0.0, min(100.0, round(score, 1))))
-        dqs_status = "ok" if self.data_quality_score_ >= 75 else ("warn" if self.data_quality_score_ >= 50 else "error")
+        dqs_status: Severity = "ok" if self.data_quality_score_ >= 75 else ("warn" if self.data_quality_score_ >= 50 else "error")
         self.report_.add(
             "data_quality_score",
             dqs_status,

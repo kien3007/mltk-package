@@ -33,13 +33,19 @@ class BaseStep(BaseEstimator, TransformerMixin):
         X: pd.DataFrame,
         y: Any = None,
         cfg: TaskConfig | None = None,
+        **fit_params: Any,
     ) -> BaseStep:
-        """Fit step on training data."""
+        """Fit step on training data.
+
+        Each call starts from a fresh report so that re-fitting does not accumulate items.
+        Extra ``fit_params`` are forwarded to ``_fit`` (subclasses must accept them).
+        """
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
+        self.report_ = Report(title=self.report_.title if hasattr(self, "report_") else self.__class__.__name__)
         self.feature_names_in_ = [str(c) for c in X.columns]
-        self._fit(X.copy(), y=y, cfg=cfg)
+        self._fit(X.copy(), y=y, cfg=cfg, **fit_params)
         self._is_fitted = True
         return self
 
@@ -62,8 +68,21 @@ class BaseStep(BaseEstimator, TransformerMixin):
         cfg: TaskConfig | None = None,
         **fit_params: Any,
     ) -> pd.DataFrame:
-        """Fit and transform in one call."""
-        return self.fit(X, y=y, cfg=cfg).transform(X)
+        """Fit and transform in one call.
+
+        Subclasses whose training-time output must differ from ``transform`` (e.g.
+        out-of-fold target encoding) override ``_fit_transform_train``.
+        """
+        self.fit(X, y=y, cfg=cfg, **fit_params)
+        X_df = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
+        res = self._fit_transform_train(X_df.copy(), y)
+        if res is None:
+            return self.transform(X_df)
+        return res
+
+    def _fit_transform_train(self, X: pd.DataFrame, y: Any) -> pd.DataFrame | None:
+        """Optional hook returning training-time output; ``None`` means use ``transform``."""
+        return None
 
     def run(
         self,
@@ -80,7 +99,7 @@ class BaseStep(BaseEstimator, TransformerMixin):
         y: Any = None,
         cfg: TaskConfig | None = None,
     ) -> BaseStep:
-        """Subclass override for fit logic."""
+        """Subclass override for fit logic (may declare extra keyword-only fit params)."""
         return self
 
     def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
