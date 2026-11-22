@@ -113,6 +113,8 @@ def build_default_pipeline(cfg: TaskConfig) -> Pipeline:
                 random_state=cfg.seed,
                 candidates=modelling.get("candidates"),
                 handle_imbalance=bool(modelling.get("handle_imbalance", True)),
+                calibration=modelling.get("calibration"),
+                threshold=modelling.get("threshold", 0.5),
             ),
         ),
     ]
@@ -246,6 +248,22 @@ def split_data(
     return Split(X_train, X_test, y_train, y_test, strategy, fit_params)
 
 
+def _threshold_failures(cfg: TaskConfig, values: dict[str, Any]) -> list[str]:
+    """Human-readable list of ``metric_thresholds`` violated by ``values``."""
+    failures = []
+    for metric, threshold in cfg.metric_thresholds.items():
+        value = values.get(metric)
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            failures.append(f"{metric} could not be computed")
+            continue
+        if metric in LOWER_IS_BETTER:
+            if value > threshold:
+                failures.append(f"{metric}={value:.4f} (must be <= {threshold})")
+        elif value < threshold:
+            failures.append(f"{metric}={value:.4f} (must be >= {threshold})")
+    return failures
+
+
 def validate_metric_thresholds(cfg: TaskConfig) -> None:
     """Fail fast on unknown metric names so a typo cannot silently disable the release gate."""
     allowed = AVAILABLE_METRICS[cfg.task_type]
@@ -321,6 +339,9 @@ def train(
     arena = pipeline.named_steps.get(arena_name) if arena_name else None
     if arena is not None:
         metrics["champion"] = arena.best_model_name_
+        metrics["cv_scope"] = arena.cv_scope_
+        metrics["calibration"] = arena.calibration_
+        metrics["decision_threshold"] = arena.decision_threshold_
         metrics["cv"] = {
             k: v
             for k, v in arena.cv_results_.get(arena.best_model_name_, {}).items()
@@ -341,17 +362,7 @@ def train(
     )
 
     # Thresholds from config act as a release gate on the holdout set
-    failures = []
-    for metric, threshold in cfg.metric_thresholds.items():
-        value = metrics["holdout"].get(metric)
-        if value is None:  # validated up-front, so only possible if probabilities are unavailable
-            failures.append(f"{metric} could not be computed on the holdout set")
-            continue
-        if metric in LOWER_IS_BETTER:
-            if value > threshold:
-                failures.append(f"{metric}={value:.4f} (must be <= {threshold})")
-        elif value < threshold:
-            failures.append(f"{metric}={value:.4f} (must be >= {threshold})")
+    failures = _threshold_failures(cfg, metrics["holdout"])
     metrics["thresholds_passed"] = not failures
     metrics["threshold_failures"] = failures
     if failures:
@@ -421,9 +432,15 @@ def predict_frame(
     cfg: TaskConfig,
     metadata: dict[str, Any],
     df: pd.DataFrame,
-    threshold: float = 0.5,
+    threshold: float | None = None,
 ) -> pd.DataFrame:
-    """Score a DataFrame with a loaded bundle and return a predictions frame."""
+    """Score a DataFrame with a loaded bundle and return a predictions frame.
+
+    ``threshold=None`` uses the decision threshold stored in the bundle (tuned or configured
+    at training time, default 0.5).
+    """
+    if threshold is None:
+        threshold = float(metadata.get("metrics", {}).get("decision_threshold") or 0.5)
     X = df.drop(columns=[cfg.target], errors="ignore")
     X = validate_input(X, metadata.get("schema", {}))
 
@@ -449,7 +466,7 @@ def predict_frame(
 
 
 def predict_bundle(
-    bundle_path: str | Path, df: pd.DataFrame, threshold: float = 0.5
+    bundle_path: str | Path, df: pd.DataFrame, threshold: float | None = None
 ) -> pd.DataFrame:
     pipeline, cfg, metadata = load_bundle(bundle_path)
     return predict_frame(pipeline, cfg, metadata, df, threshold=threshold)
@@ -472,3 +489,109 @@ def monitor_bundle(bundle_path: str | Path, df: pd.DataFrame) -> Report:
     except ValidationError as exc:
         logger.warning("Skipping prediction drift: %s", exc)
     return monitor.monitor(X, y_pred=y_pred)
+
+
+# --------------------------------------------------------------------- evaluate
+@dataclass
+class EvaluationResult:
+    overall: dict[str, Any]
+    by_group: pd.DataFrame | None
+    failures: list[str]
+    reference: dict[str, float]
+
+    @property
+    def passed(self) -> bool:
+        return not self.failures
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "overall": self.overall,
+            "by_group": None if self.by_group is None else self.by_group.to_dict(orient="records"),
+            "failures": self.failures,
+            "reference_holdout": self.reference,
+            "passed": self.passed,
+        }
+
+
+def encode_target_like_training(
+    y: pd.Series, cfg: TaskConfig, metadata: dict[str, Any]
+) -> np.ndarray:
+    """Encode labels exactly as during training (stored ``label_map``), never re-deriving it."""
+    if cfg.task_type == "regression":
+        return pd.to_numeric(y, errors="raise").to_numpy(dtype=float)
+    label_map = (metadata.get("metrics", {}).get("target") or {}).get("label_map")
+    if not label_map:
+        return y.to_numpy()
+    cleaned = y.astype(str).str.strip().str.rstrip(".")
+    unknown = sorted(set(cleaned) - set(label_map))
+    if unknown:
+        raise ValidationError(f"Labels not seen at training time: {unknown[:10]}")
+    return cleaned.map(label_map).to_numpy(dtype=int)
+
+
+def _labelled_metrics(
+    y: np.ndarray, pred: np.ndarray, score: np.ndarray | None, task_type: str
+) -> dict[str, Any]:
+    probs = None if score is None else np.column_stack([1 - score, score])
+    m: dict[str, Any] = {"n": int(len(y))}
+    if task_type == "classification":
+        m["positive_rate"] = float(np.mean(y))
+        if score is not None:
+            m["mean_score"] = float(np.mean(score))
+    m.update(compute_metrics(y, pred, probs, task_type=task_type))  # type: ignore[arg-type]
+    if task_type == "classification" and len(np.unique(y)) < 2:
+        m["roc_auc"] = float("nan")  # undefined on a single-class batch (not 0.5)
+    return m
+
+
+def evaluate_frame(
+    pipeline: Pipeline,
+    cfg: TaskConfig,
+    metadata: dict[str, Any],
+    df: pd.DataFrame,
+    by: str | None = None,
+    threshold: float | None = None,
+) -> EvaluationResult:
+    """Score labelled data and compute metrics overall and per ``by`` group (e.g. cutoff/week).
+
+    Each group (and the overall set) is checked against ``cfg.metric_thresholds``.
+    """
+    if cfg.target not in df.columns:
+        raise ValidationError(f"Evaluation data needs the target column '{cfg.target}'.")
+    if by is not None and by not in df.columns:
+        raise ValidationError(f"Group column '{by}' not found in evaluation data.")
+
+    y = encode_target_like_training(df[cfg.target], cfg, metadata)
+    preds = predict_frame(pipeline, cfg, metadata, df, threshold=threshold)
+    pred = preds["prediction"].to_numpy()
+    score = preds["score"].to_numpy() if "score" in preds.columns else None
+
+    overall = _labelled_metrics(y, pred, score, cfg.task_type)
+    failures = [f"overall: {f}" for f in _threshold_failures(cfg, overall)]
+
+    by_group = None
+    if by is not None:
+        rows = []
+        keys = df[by].to_numpy()
+        for key in pd.unique(keys):
+            mask = keys == key
+            m = _labelled_metrics(
+                y[mask], pred[mask], None if score is None else score[mask], cfg.task_type
+            )
+            rows.append({by: key, **m})
+            failures += [f"{by}={key}: {f}" for f in _threshold_failures(cfg, m)]
+        by_group = pd.DataFrame(rows).sort_values(by).reset_index(drop=True)
+
+    reference = {
+        k: v
+        for k, v in (metadata.get("metrics", {}).get("holdout") or {}).items()
+        if isinstance(v, (int, float))
+    }
+    return EvaluationResult(overall, by_group, failures, reference)
+
+
+def evaluate_bundle(
+    bundle_path: str | Path, df: pd.DataFrame, by: str | None = None, threshold: float | None = None
+) -> EvaluationResult:
+    pipeline, cfg, metadata = load_bundle(bundle_path)
+    return evaluate_frame(pipeline, cfg, metadata, df, by=by, threshold=threshold)

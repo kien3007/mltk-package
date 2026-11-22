@@ -150,12 +150,17 @@ class ModelImportanceSelector(BaseStep):
     """Select top features using tree-based importance weights."""
 
     def __init__(
-        self, top_k: int | None = None, threshold: float | None = None, random_state: int = 42
+        self,
+        top_k: int | None = None,
+        threshold: float | None = None,
+        random_state: int = 42,
+        n_jobs: int | None = -1,
     ) -> None:
         super().__init__()
         self.top_k = top_k
         self.threshold = threshold
         self.random_state = random_state
+        self.n_jobs = n_jobs
         self.selected_features_: list[str] = []
         self.importances_: dict[str, float] = {}
 
@@ -176,9 +181,13 @@ class ModelImportanceSelector(BaseStep):
 
         is_classif = cfg.task_type == "classification" if cfg else len(np.unique(y_arr)) <= 20
         est = (
-            ExtraTreesClassifier(n_estimators=50, random_state=self.random_state)
+            ExtraTreesClassifier(
+                n_estimators=50, random_state=self.random_state, n_jobs=self.n_jobs
+            )
             if is_classif
-            else ExtraTreesRegressor(n_estimators=50, random_state=self.random_state)
+            else ExtraTreesRegressor(
+                n_estimators=50, random_state=self.random_state, n_jobs=self.n_jobs
+            )
         )
         est.fit(X_num, y_arr)
 

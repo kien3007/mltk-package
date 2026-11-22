@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator
+from sklearn.base import BaseEstimator, clone
 
 from mlkit.core.bundle import load_bundle, save_bundle
 from mlkit.core.config import TaskConfig
@@ -21,8 +21,23 @@ class Pipeline(BaseEstimator):
     Sequential pipeline managing Steps and Estimator, collecting reports and metrics.
     """
 
-    def __init__(self, steps: list[tuple[str, Any]]) -> None:
+    def __init__(self, steps: list[tuple[str, Any]], cv_scope: str = "pipeline") -> None:
+        """
+        Parameters
+        ----------
+        steps : list of (name, step)
+            Transformers followed by a final estimator.
+        cv_scope : {"pipeline", "model"}
+            ``"pipeline"`` (default): when the final step supports it (``ModelArena``), every
+            CV fold re-fits all upstream steps on the fold's training rows only, so encoders,
+            scalers and feature selectors never see validation labels. ``"model"``: upstream
+            steps are fitted once on all training rows and only the model is cross-validated
+            (faster, but CV scores can be optimistic when supervised selection is used).
+        """
+        if cv_scope not in ("pipeline", "model"):
+            raise ValueError("cv_scope must be 'pipeline' or 'model'")
         self.steps = steps
+        self.cv_scope = cv_scope
         self._is_fitted: bool = False
         self.feature_names_in_: list[str] = []
 
@@ -63,28 +78,98 @@ class Pipeline(BaseEstimator):
                 raise ValueError(f"Invalid fit parameter '{key}'. Use '<step>__<param>'.")
             routed[step_name][param] = value
 
-        for i, (name, step) in enumerate(self.steps):
-            is_last = i == len(self.steps) - 1
-            kwargs = dict(routed[name])
+        final_name, final = self.steps[-1]
+        upstream = self.steps[:-1]
+        final_kwargs = dict(routed[final_name])
 
-            if not is_last and hasattr(step, "fit_transform"):
-                if self._accepts(step.fit_transform, "cfg"):
-                    kwargs["cfg"] = cfg
-                current_X = step.fit_transform(current_X, y, **kwargs)
-                if not isinstance(current_X, pd.DataFrame):
-                    current_X = pd.DataFrame(current_X)
-                continue
+        if (
+            getattr(self, "cv_scope", "model") == "pipeline"
+            and upstream
+            and getattr(final, "supports_fold_data", False)
+        ):
+            final_kwargs["fold_data"] = self._build_fold_data(
+                current_X, y, cfg, routed, final_kwargs
+            )
 
-            if hasattr(step, "fit"):
-                if self._accepts(step.fit, "cfg"):
-                    kwargs["cfg"] = cfg
-                step.fit(current_X, y, **kwargs)
+        current_X = self._fit_upstream(upstream, current_X, y, cfg, routed)
 
-            if not is_last and hasattr(step, "transform"):
-                current_X = step.transform(current_X)
+        if hasattr(final, "fit"):
+            if self._accepts(final.fit, "cfg"):
+                final_kwargs["cfg"] = cfg
+            final.fit(current_X, y, **final_kwargs)
 
         self._is_fitted = True
         return self
+
+    def _fit_upstream(
+        self,
+        steps: list[tuple[str, Any]],
+        X: pd.DataFrame,
+        y: Any,
+        cfg: TaskConfig | None,
+        routed: dict[str, dict[str, Any]],
+    ) -> pd.DataFrame:
+        """Fit (with ``fit_transform``) each transformer in ``steps``; return transformed X."""
+        current_X = X
+        for name, step in steps:
+            kwargs = dict(routed.get(name, {}))
+            if hasattr(step, "fit_transform"):
+                if self._accepts(step.fit_transform, "cfg"):
+                    kwargs["cfg"] = cfg
+                current_X = step.fit_transform(current_X, y, **kwargs)
+            else:
+                if self._accepts(step.fit, "cfg"):
+                    kwargs["cfg"] = cfg
+                step.fit(current_X, y, **kwargs)
+                current_X = step.transform(current_X)
+            if not isinstance(current_X, pd.DataFrame):
+                current_X = pd.DataFrame(current_X)
+        return current_X
+
+    @staticmethod
+    def _take(value: Any, idx: np.ndarray, n_rows: int) -> Any:
+        """Row-subset ``value`` if it is row-aligned with the training data."""
+        if isinstance(value, (pd.Series, pd.DataFrame)) and len(value) == n_rows:
+            return value.iloc[idx]
+        if isinstance(value, np.ndarray) and len(value) == n_rows:
+            return value[idx]
+        if isinstance(value, list) and len(value) == n_rows:
+            return [value[i] for i in idx]
+        return value
+
+    def _build_fold_data(
+        self,
+        X: pd.DataFrame,
+        y: Any,
+        cfg: TaskConfig | None,
+        routed: dict[str, dict[str, Any]],
+        final_kwargs: dict[str, Any],
+    ) -> list[tuple[pd.DataFrame, np.ndarray, pd.DataFrame, np.ndarray]]:
+        """Re-fit clones of all upstream steps inside every CV fold (pipeline-level CV)."""
+        final = self.steps[-1][1]
+        n = len(X)
+        y_arr = np.asarray(y)
+        splits = final.make_splits(
+            X,
+            y_arr,
+            cfg=cfg,
+            groups=final_kwargs.get("groups"),
+            time_index=final_kwargs.get("time_index"),
+        )
+        folds = []
+        for tr, va in splits:
+            fold_steps = [(name, clone(step)) for name, step in self.steps[:-1]]
+            fold_routed = {
+                name: {k: self._take(v, tr, n) for k, v in params.items()}
+                for name, params in routed.items()
+            }
+            y_tr = self._take(y, tr, n) if isinstance(y, (pd.Series, list)) else y_arr[tr]
+            X_tr = self._fit_upstream(fold_steps, X.iloc[tr], y_tr, cfg, fold_routed)
+            X_va = X.iloc[va]
+            for _, step in fold_steps:
+                X_va = step.transform(X_va)
+            folds.append((X_tr, y_arr[tr], X_va, y_arr[va]))
+        return folds
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """Transform through all transformer steps (excluding final model estimator)."""

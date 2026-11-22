@@ -50,6 +50,41 @@ class BaseTrainer(BaseEstimator):
             self.kwargs = {**self.kwargs, **extra}
         return self
 
+    # ------------------------------------------------------- sklearn type
+    def _resolved_type(self) -> str | None:
+        """'classifier' / 'regressor' (from task_type, or the wrapped estimator) or None."""
+        if self.task_type == "classification":
+            return "classifier"
+        if self.task_type == "regression":
+            return "regressor"
+        inner = getattr(self, "estimator", None)
+        if inner is None:
+            return None
+        from sklearn.base import is_classifier, is_regressor
+
+        return (
+            "classifier" if is_classifier(inner) else "regressor" if is_regressor(inner) else None
+        )
+
+    @property
+    def _estimator_type(self) -> str | None:  # sklearn < 1.6
+        return self._resolved_type()
+
+    def __sklearn_tags__(self) -> Any:  # sklearn >= 1.6
+        tags = super().__sklearn_tags__()
+        from sklearn.utils import ClassifierTags, RegressorTags
+
+        kind = self._resolved_type()
+        if kind == "classifier":
+            tags.estimator_type = "classifier"
+            tags.classifier_tags = ClassifierTags()
+            tags.regressor_tags = None
+        elif kind == "regressor":
+            tags.estimator_type = "regressor"
+            tags.regressor_tags = RegressorTags()
+            tags.classifier_tags = None
+        return tags
+
     # ------------------------------------------------------------ fitting
     def _build(self, y: np.ndarray) -> Any:
         """Return an unfitted library estimator for target ``y``."""
@@ -82,6 +117,11 @@ class BaseTrainer(BaseEstimator):
                 f"{type(self._estimator).__name__} does not support predict_proba."
             )
         return self._estimator.predict_proba(X)
+
+    @property
+    def classes_(self) -> np.ndarray:
+        self._check_fitted()
+        return self._estimator.classes_
 
     @property
     def feature_importances_(self) -> np.ndarray:
@@ -169,11 +209,13 @@ class RandomForestTrainer(BaseTrainer):
         handle_imbalance: bool = True,
         task_type: TaskType = "classification",
         random_state: int = 42,
+        n_jobs: int | None = -1,
         **kwargs: Any,
     ) -> None:
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
+        self.n_jobs = n_jobs
         self.handle_imbalance = handle_imbalance
         self.task_type = task_type
         self.random_state = random_state
@@ -185,6 +227,7 @@ class RandomForestTrainer(BaseTrainer):
             "max_depth": self.max_depth,
             "min_samples_split": self.min_samples_split,
             "random_state": self.random_state,
+            "n_jobs": self.n_jobs,
             **self.kwargs,
         }
         if self.task_type == "classification":

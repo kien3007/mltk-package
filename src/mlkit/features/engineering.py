@@ -91,12 +91,12 @@ class RatioFeatures(BaseStep):
         eps: float = 1e-6,
     ) -> None:
         super().__init__()
-        self.pairs = pairs or []
+        self.pairs = pairs  # stored as given (sklearn clone contract); defaults resolved at use
         self.create_diff = create_diff
         self.eps = eps
 
     def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> RatioFeatures:
-        valid_pairs = [(a, b) for a, b in self.pairs if a in X.columns and b in X.columns]
+        valid_pairs = [(a, b) for a, b in (self.pairs or []) if a in X.columns and b in X.columns]
         self.report_.add(
             "ratio_features",
             "ok",
@@ -106,7 +106,7 @@ class RatioFeatures(BaseStep):
 
     def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
         out = X.copy()
-        for col_a, col_b in self.pairs:
+        for col_a, col_b in self.pairs or []:
             if col_a in out.columns and col_b in out.columns:
                 a_vals = pd.to_numeric(out[col_a], errors="coerce")
                 b_vals = pd.to_numeric(out[col_b], errors="coerce")
@@ -127,20 +127,22 @@ class GroupAggFeatures(BaseStep):
         aggregations: list[str] | None = None,
     ) -> None:
         super().__init__()
-        self.group_cols = group_cols or []
-        self.target_cols = target_cols or []
-        self.aggregations = aggregations or ["mean", "std"]
+        self.group_cols = group_cols
+        self.target_cols = target_cols
+        self.aggregations = aggregations
         self.lookup_tables_: dict[str, pd.DataFrame] = {}
 
     def _fit(
         self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None
     ) -> GroupAggFeatures:
         self.lookup_tables_ = {}
-        for g in self.group_cols:
+        self.lookup_tables_ = {}
+        aggregations = self.aggregations or ["mean", "std"]
+        for g in self.group_cols or []:
             if g in X.columns:
-                num_targets = [t for t in self.target_cols if t in X.columns and t != g]
+                num_targets = [t for t in self.target_cols or [] if t in X.columns and t != g]
                 if num_targets:
-                    agg_df = X.groupby(g, observed=True)[num_targets].agg(self.aggregations)
+                    agg_df = X.groupby(g, observed=True)[num_targets].agg(aggregations)
                     # Flatten multi-index
                     agg_df.columns = [
                         f"{g}_{col}_{stat}" for col, stat in agg_df.columns.to_flat_index()
@@ -226,10 +228,10 @@ class MultiTableAggregator(BaseStep):
         window_days: list[int] | None = None,
     ) -> None:
         super().__init__()
-        self.secondary_df = secondary_df.copy()
+        self.secondary_df = secondary_df  # never mutated; not copied so clone() works
         self.join_key = join_key
-        self.numeric_aggs = numeric_aggs or ["mean", "sum", "std", "min", "max", "count"]
-        self.categorical_aggs = categorical_aggs or ["nunique"]
+        self.numeric_aggs = numeric_aggs
+        self.categorical_aggs = categorical_aggs
         self.prefix = prefix
         self.time_col = time_col
         self.window_days = window_days
@@ -262,9 +264,9 @@ class MultiTableAggregator(BaseStep):
 
         agg_dict: dict[str, list[str]] = {}
         for c in num_cols:
-            agg_dict[c] = self.numeric_aggs
+            agg_dict[c] = self.numeric_aggs or ["mean", "sum", "std", "min", "max", "count"]
         for c in cat_cols:
-            agg_dict[c] = self.categorical_aggs
+            agg_dict[c] = self.categorical_aggs or ["nunique"]
 
         if not agg_dict:
             self.report_.add(
@@ -273,7 +275,9 @@ class MultiTableAggregator(BaseStep):
             return self
 
         grouped = sec.groupby(self.join_key, observed=True).agg(agg_dict)
-        grouped.columns = [f"{self.prefix}{col}_{stat}" for col, stat in grouped.columns]
+        grouped.columns = [
+            f"{self.prefix}{col}_{stat}" for col, stat in grouped.columns.to_flat_index()
+        ]
 
         if self.time_col and self.time_col in sec.columns and self.window_days:
             sec_time = pd.to_datetime(sec[self.time_col], errors="coerce")

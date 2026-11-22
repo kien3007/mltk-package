@@ -20,6 +20,25 @@
 - `OptunaSearch` refit mô hình thắng bằng *toàn bộ* dict tham số của trial (kể cả hằng số), không chỉ các giá trị được suggest.
   `LGBM_SPACE` thêm `subsample_freq=1` để `subsample` thực sự có tác dụng.
 
+### Củng cố (lượt 3)
+- **CV ở mức toàn pipeline là mặc định (ADR-006).** Các bước trước mô hình được fit lại trong từng fold. Với target
+  ngẫu nhiên kèm bộ chọn đặc trưng, AUC CV giảm từ 0,693 (rò rỉ) về 0,491. Dùng `Pipeline(cv_scope="model")` để giữ hành vi cũ.
+  `CVEvaluator` được tách thành `split` / `evaluate_folds` / `evaluate`.
+- Mọi step tuân thủ hợp đồng `clone()` của sklearn. `RatioFeatures`, `GroupAggFeatures` và `MultiTableAggregator`
+  trước đây sửa tham số trong `__init__`. `GroupAggFeatures` cũng không reset bảng tra khi fit lại.
+- Trainer khai báo kiểu estimator cho sklearn (`__sklearn_tags__` và `_estimator_type`). Trước đây
+  `CalibratedClassifierCV` coi trainer của mlkit là regressor.
+- Arena: `calibration` (sigmoid/isotonic/auto, kiểm chứng trên cùng các fold, chỉ giữ khi Brier CV giảm) và
+  `threshold` (số, `f1` hoặc `youden`, tối ưu trên OOF). Ngưỡng được lưu trong bundle và dùng làm mặc định cho
+  `predict`/`serve`; `Arena.predict` áp dụng ngưỡng này.
+- `mlkit evaluate`: metric trên dữ liệu có nhãn, tổng thể và theo nhóm (`--by`), so với holdout lúc train và kiểm tra
+  `metric_thresholds`. Thoát mã 2 nếu có nhóm không đạt. Batch chỉ có một lớp cho `roc_auc` = NaN (không còn là 0,5).
+- `mlkit.features.temporal` (`TemporalSpec`, `build_features`, `build_panel`, `build_labels`): đặc trưng theo mốc
+  thời gian dùng chung cho train và chấm điểm. Ví dụ dunnhumby đã chuyển sang dùng module này và cho kết quả trùng
+  khớp với bảng viết tay.
+- `n_jobs=-1` cho `RandomForestTrainer` và `ModelImportanceSelector`. Thời gian train dunnhumby giảm từ 3 phút 34 giây
+  xuống 1 phút 27 giây, kết quả không đổi.
+
 ### Tính năng mới
 - CLI: `mlkit predict`, `mlkit serve`, `mlkit steps`; `monitor --out/--fail-on`; `run --html-report`; các cờ `-v/-q/--log-json`; mã thoát `2` khi có drift.
 - Pipeline khai báo bằng YAML (`steps:`) thông qua registry.
