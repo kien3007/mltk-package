@@ -73,10 +73,10 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - run: uv python install 3.12
       - run: uv sync --all-extras
-      - name: Generality benchmark
+      - name: Generality benchmark + executable user guide
         env:
           MPLBACKEND: Agg
-        run: uv run pytest -m benchmark -v
+        run: uv run pytest -m "benchmark or docs" -v
 
   examples:
     runs-on: ubuntu-latest

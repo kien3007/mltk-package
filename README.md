@@ -1,5 +1,9 @@
 # MLKit: Thư viện 6 bước xây dựng mô hình Machine Learning dạng bảng
 
+> 📘 **[Hướng dẫn sử dụng theo từng công đoạn](docs/HUONG_DAN_SU_DUNG.md)**: mỗi công đoạn (profile, QC, EDA,
+> trực quan hóa, tiền xử lý, đặc trưng, chọn đặc trưng, mô hình, đánh giá, đóng gói, dự đoán, giám sát) dùng
+> hàm/class nào, để làm gì, tham số và kết quả trả về, kèm ví dụ chạy được.
+
 `mlkit` là thư viện Python chuẩn hóa và đóng gói trọn vẹn 6 giai đoạn trong quy trình xây dựng mô hình học máy dạng bảng (Tabular ML):
 1. **QC & EDA**: Kiểm định chất lượng dữ liệu, kiểm tra schema, missing, outlier, rò rỉ dữ liệu (leakage), và cổng chất lượng (Quality Gate).
 2. **Preprocessing**: Tự động nhận diện kiểu, impute kèm cờ missing, gộp category hiếm, mã hóa theo cardinality (One-Hot, Ordinal, Target Encoding), chuẩn hóa (Scaler).
