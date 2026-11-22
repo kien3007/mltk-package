@@ -98,7 +98,7 @@ class TestCLI:
         cfg = TaskConfig(task_type="classification", target="class")
         pipe = build_default_pipeline(cfg)
 
-        assert len(pipe.steps) == 11
+        assert len(pipe.steps) == 12
         step_names = [s[0] for s in pipe.steps]
         assert "qc" in step_names
         assert "encoder" in step_names

@@ -7,6 +7,8 @@ Commands::
     mlkit monitor  BUNDLE DATA [--out FILE] [--fail-on warn|error]
     mlkit evaluate BUNDLE LABELLED_DATA [--by COL] [--out FILE] [--threshold T]
     mlkit serve    BUNDLE [--host 127.0.0.1] [--port 8000]
+    mlkit eda      DATA [--target COL] [--task-type T] [--out report.html] [--profile-json F]
+    mlkit benchmark [--case NAME ...] [--no-eda] [--out FILE]   generality suite (exit 1 on failure)
     mlkit steps    list registered pipeline steps
 
 Global flags: ``-v/--verbose``, ``-q/--quiet``, ``--log-json``.
@@ -192,6 +194,62 @@ def cmd_serve(bundle_path: str, host: str = "127.0.0.1", port: int = 8000) -> in
     return 0
 
 
+def cmd_eda(
+    data_path: str,
+    target: str | None = None,
+    task_type: str | None = None,
+    out_path: str | None = None,
+    profile_json: str | None = None,
+    sample_rows: int | None = 200_000,
+) -> int:
+    """Profile + QC + EDA of a data file; writes a standalone HTML report."""
+    from mlkit.qc_eda import run_eda
+
+    try:
+        df = read_table(data_path)
+        report = run_eda(df, target=target, task_type=task_type, sample_rows=sample_rows)
+    except (MLKitError, FileNotFoundError, ValueError, KeyError) as exc:
+        logger.error("%s: %s", type(exc).__name__, exc)
+        return 1
+    print(report.summary())
+    if out_path:
+        report.to_html(out_path, title=f"EDA - {Path(data_path).name}")
+        logger.info("EDA report written to %s", out_path)
+    if profile_json:
+        payload = {
+            "profile": report.profile.to_dict(),
+            "target_association": report.target_association.to_dict("records"),
+        }
+        if report.qc is not None:
+            payload["qc"] = report.qc.report_.to_dict()
+            payload["issues"] = report.qc.issues_
+        Path(profile_json).write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        logger.info("Profile written to %s", profile_json)
+    return 0
+
+
+def cmd_benchmark(
+    cases: list[str] | None = None, with_eda: bool = True, out_path: str | None = None
+) -> int:
+    """Run the multi-dataset generality suite; exit 1 if any expectation fails."""
+    import pandas as pd
+
+    from mlkit.benchmarks import run_suite
+
+    try:
+        res = run_suite(cases, with_eda=with_eda)
+    except ValueError as exc:
+        logger.error("%s", exc)
+        return 1
+    with pd.option_context("display.width", 200, "display.max_colwidth", 100):
+        print(res[["case", "passed", "seconds", "detail"]].to_string(index=False))
+    if out_path:
+        write_table(res, out_path)
+    failed = res.loc[~res["passed"], "case"].tolist()
+    print(f"{len(res) - len(failed)}/{len(res)} passed" + (f"; FAILED: {failed}" if failed else ""))
+    return 1 if failed else 0
+
+
 def cmd_steps() -> int:
     from mlkit.core.registry import list_steps
 
@@ -252,6 +310,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--threshold", type=float, default=None, help="Override the bundle decision threshold"
     )
 
+    eda_p = sub.add_parser(
+        "eda", help="Profile, quality-check and explore a data file (HTML report)"
+    )
+    eda_p.add_argument("data")
+    eda_p.add_argument("--target", help="Target column (optional)")
+    eda_p.add_argument(
+        "--task-type", choices=["classification", "regression"], help="Override target type"
+    )
+    eda_p.add_argument("--out", help="HTML report path")
+    eda_p.add_argument(
+        "--profile-json", help="Write the profile, QC findings and associations as JSON"
+    )
+    eda_p.add_argument(
+        "--sample-rows", type=int, default=200_000, help="Analyse at most this many rows (0 = all)"
+    )
+
+    bm_p = sub.add_parser("benchmark", help="Run the multi-dataset generality suite")
+    bm_p.add_argument("--case", action="append", help="Run only this case (repeatable)")
+    bm_p.add_argument("--no-eda", action="store_true", help="Skip the EDA/report part of each case")
+    bm_p.add_argument("--out", help="Write results (.csv/.parquet/.json)")
+
     sub.add_parser("steps", help="List registered pipeline steps")
     return parser
 
@@ -277,6 +356,17 @@ def main(argv: list[str] | None = None) -> None:
         )
     elif args.command == "serve":
         code = cmd_serve(args.bundle, host=args.host, port=args.port)
+    elif args.command == "eda":
+        code = cmd_eda(
+            args.data,
+            target=args.target,
+            task_type=args.task_type,
+            out_path=args.out,
+            profile_json=args.profile_json,
+            sample_rows=args.sample_rows or None,
+        )
+    elif args.command == "benchmark":
+        code = cmd_benchmark(args.case, with_eda=not args.no_eda, out_path=args.out)
     elif args.command == "steps":
         code = cmd_steps()
     else:

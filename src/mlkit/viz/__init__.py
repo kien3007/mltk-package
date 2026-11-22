@@ -17,10 +17,24 @@ from mlkit.viz.charts import (
     plot_shap_summary,
     plot_target_distribution,
 )
+from mlkit.viz.eda_charts import (
+    plot_association_matrix,
+    plot_column_overview,
+    plot_distributions,
+    plot_missingness,
+    plot_target_association,
+    plot_target_by_feature,
+)
 from mlkit.viz.html_report import generate_html_report
 
 __all__ = [
     "generate_html_report",
+    "plot_association_matrix",
+    "plot_column_overview",
+    "plot_distributions",
+    "plot_missingness",
+    "plot_target_association",
+    "plot_target_by_feature",
     "plot_arena_comparison",
     "plot_calibration_curve",
     "plot_confusion_matrix",

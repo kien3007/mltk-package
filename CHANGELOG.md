@@ -1,5 +1,44 @@
 # Changelog
 
+## [Unreleased] - nền tảng dữ liệu (ADR-007)
+
+### Hiểu dữ liệu
+- `mlkit.qc_eda.profile`: profile và **kiểu ngữ nghĩa** dùng chung cho mọi bước. Nhận diện số lưu dạng chuỗi
+  (tiền tệ, %, dấu phân cách, dấu phẩy thập phân), Yes/No, ngày dạng chuỗi, giá trị thiếu đội lốt, `inf`, cột trùng,
+  cột ID (theo tên, tách snake/camelCase, không còn nhầm `amount_paid`) và văn bản tự do.
+- **QC viết lại trên nền profile**, giữ tương thích tên kiểm tra và tham số cũ.
+  - Kiểm tra mới: cột trùng, giá trị thiếu đội lốt, gần như hằng, cột ID, văn bản, kiểu trộn, `inf`, ngoại lai,
+    lớp hiếm, mất cân bằng, target hồi quy lệch.
+  - `issues_` ghi theo từng cột kèm gợi ý xử lý.
+  - **Kiểm tra rò rỉ áp dụng cho mọi cặp kiểu cột và target**; trước đây chỉ cột số với target số.
+- `mlkit.qc_eda.eda.run_eda`: EDA cho target nhị phân, nhiều lớp, hồi quy hoặc không có target.
+  - Thước đo liên hệ chung trên [0, 1]: |Spearman|, η, Cramér's V có hiệu chỉnh chệch.
+  - Bảng target theo bin/category, giá trị thiếu so với target, ma trận liên hệ giữa các cột.
+  - Báo cáo HTML độc lập, mọi biểu đồ kèm bảng số liệu.
+- `mlkit.viz.eda_charts`: 6 biểu đồ chọn dạng theo kiểu cột, dùng palette đã kiểm chứng và không có trục kép.
+- CLI `mlkit eda` và `mlkit benchmark`.
+
+### Tiền xử lý
+- `TypeCaster` dựa trên profile:
+  - chuyển đổi kiểu và đóng băng kế hoạch chuyển đổi cho dữ liệu mới;
+  - loại cột ID, rỗng, hằng, trùng lặp, ghi lý do vào `drop_reasons_`;
+  - `time_col` dạng ngày được giữ để tách thành phần lịch.
+- `TextFeatures` (mới), `MissingImputer(add_indicator="auto")`, `RareCategoryGrouper(min_count, max_cardinality)`.
+- `CategoricalEncoder`:
+  - category vừa và nhiều giá trị dùng target encoding; không có target thì dùng frequency encoding (trước đây là
+    ordinal với thứ tự tùy ý);
+  - `strategies` cho phép chỉ định theo từng cột; ordinal sắp xếp theo thứ tự xác định.
+- Pipeline mặc định: `qc → type_caster → datetime → text → imputer → rare_grouper → encoder → ...`.
+- **Sửa lỗi:**
+  - `RareCategoryGrouper(min_freq=1%)` mặc định đã xóa sạch tín hiệu của cột 400 giá trị (AUC 0,54 lên 0,78);
+  - target nhiều lớp dạng số gây crash, giờ báo lỗi rõ ràng;
+  - `coerce_numeric` trả về `Float64`/`pd.NA`, giờ là `float64`/`NaN`.
+
+### Hàng rào và hiệu năng
+- `mlkit.benchmarks`: 16 dataset, mỗi dataset một kỳ vọng; có job CI riêng. Phiên bản trước đạt 11/16, bản này 16/16.
+- QC không chạy lại trong fold CV (`fold_passthrough`); đo độ thuần bằng numpy; TypeCaster chuyển kiểu cột số theo
+  khối. Dataset 500 cột: 31 giây xuống 10 giây.
+
 ## [0.2.0] - 2026-11-22
 
 ### Sửa lỗi tính đúng đắn
