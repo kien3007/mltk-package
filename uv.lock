@@ -2685,7 +2685,6 @@ wheels = [
 
 [[package]]
 name = "mlkit"
-version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "joblib" },
@@ -2796,7 +2795,7 @@ requires-dist = [
     { name = "xgboost", marker = "extra == 'all'", specifier = ">=2.0.0" },
     { name = "xgboost", marker = "extra == 'xgboost'", specifier = ">=2.0.0" },
 ]
-provides-extras = ["xgboost", "viz", "explain", "tuning", "tracking", "serve", "io", "all"]
+provides-extras = ["all", "explain", "io", "serve", "tracking", "tuning", "viz", "xgboost"]
 
 [package.metadata.requires-dev]
 dev = [

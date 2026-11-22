@@ -18,7 +18,12 @@
 ### Tính năng mới
 - CLI: `mlkit predict`, `mlkit serve`, `mlkit steps`; `monitor --out/--fail-on`; `run --html-report`; các cờ `-v/-q/--log-json`; mã thoát `2` khi có drift.
 - Pipeline khai báo bằng YAML (`steps:`) thông qua registry.
-- `metric_thresholds` hoạt động như cổng phát hành trên tập holdout.
+- `metric_thresholds` hoạt động như cổng phát hành trên tập holdout. Hỗ trợ `brier` và `ece` (cận trên), cùng
+  `roc_auc`, `accuracy`, `precision`, `recall`, `f1`, `r2` (cận dưới) và `rmse`, `mae` (cận trên). Tên metric không
+  hợp lệ bị từ chối trước khi train; lý do không đạt được ghi vào `metrics.json` (`threshold_failures`).
+- Metric mới `brier` và `ece` (`expected_calibration_error`) trong `compute_metrics`, CV, khoảng tin cậy bootstrap và holdout.
+- `ModelArena(handle_imbalance=...)` / `modelling.handle_imbalance`: tắt class weight khi cần xác suất đã hiệu chuẩn.
+- `TypeCaster(drop_time_col=True)`: `time_col` không còn là đặc trưng thô.
 - `metrics.json` chứa kết quả CV của champion, metric holdout, khoảng tin cậy bootstrap và bảng Arena.
 - `ModelArena(candidates=[...])`, có hỗ trợ XGBoost (tùy chọn).
 - Drift: prediction drift, tỷ lệ category chưa từng thấy, kiểm tra cột bị thiếu; `DriftMonitor.to_dict()/from_dict()`.

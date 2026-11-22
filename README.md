@@ -90,8 +90,10 @@ quality_gate: true
 baseline_gate: true
 data_path: examples/data/adult.csv
 
-metric_thresholds:               # cổng phát hành trên tập holdout
-  roc_auc: 0.85
+metric_thresholds:               # cổng phát hành trên tập holdout (xem bảng bên dưới)
+  roc_auc: 0.85                  # >= ngưỡng
+  brier: 0.19                    # <= ngưỡng
+  ece: 0.02                      # <= ngưỡng
 modelling:
   candidates: [linear, random_forest, lightgbm, xgboost]
   positive_label: ">50K"
@@ -111,6 +113,23 @@ steps:
   - {name: encoder, step: preprocessing.categorical_encoder}
   - {name: arena, step: modelling.arena, params: {candidates: [linear, lightgbm]}}
 ```
+
+### Cổng phát hành `metric_thresholds`
+
+Mỗi ngưỡng được so với metric trên tập holdout. Tên metric không hợp lệ sẽ bị từ chối **trước khi train**
+(`ValidationError`), nên gõ sai tên không làm cổng bị bỏ qua âm thầm. Khi không đạt, `mlkit run` thoát với mã `1`,
+nhưng bundle vẫn được ghi, kèm `thresholds_passed: false` và `threshold_failures` trong `metrics.json`.
+
+| Loại bài toán | Metric | Điều kiện đạt |
+|---|---|---|
+| classification | `roc_auc`, `accuracy`, `precision`, `recall`, `f1` | giá trị >= ngưỡng |
+| classification | `brier`, `ece` (chất lượng xác suất; nhãn nhị phân 0/1) | giá trị <= ngưỡng |
+| regression | `r2` | giá trị >= ngưỡng |
+| regression | `rmse`, `mae` | giá trị <= ngưỡng |
+
+`ece` là Expected Calibration Error (10 bin đều); 0 nghĩa là xác suất khớp hoàn toàn với tần suất thực.
+Nếu cần dùng điểm số như xác suất, đặt `modelling.handle_imbalance: false`: class weight làm lệch xác suất
+(ví dụ dunnhumby 7 ngày: ECE 0,042 với class weight so với 0,010 khi tắt).
 
 ### Nội dung bundle
 

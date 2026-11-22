@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mlkit"
-version = "0.2.0"
+dynamic = ["version"]
 description = "A unified, production-ready 6-step tabular ML pipeline toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -50,8 +50,14 @@ all = [
 [project.scripts]
 mlkit = "mlkit.cli:main"
 
+[tool.hatch.version]
+path = "src/mlkit/__init__.py"   # single source of truth for the package version
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/mlkit"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/mlkit", "tests", "examples/*.py", "examples/*.yaml", "ADRs", "README.md", "CHANGELOG.md", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

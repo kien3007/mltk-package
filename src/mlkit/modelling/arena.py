@@ -35,6 +35,7 @@ class ModelArena(BaseStep):
         models: dict[str, Any] | None = None,
         random_state: int = 42,
         candidates: list[str] | tuple[str, ...] | None = None,
+        handle_imbalance: bool = True,
     ) -> None:
         super().__init__()
         self.cv = cv
@@ -42,6 +43,7 @@ class ModelArena(BaseStep):
         self.models = models
         self.random_state = random_state
         self.candidates = candidates
+        self.handle_imbalance = handle_imbalance
 
         self.best_model_name_: str = ""
         self.best_estimator_: Any = None
@@ -54,13 +56,20 @@ class ModelArena(BaseStep):
 
     def _build_zoo(self, task_type: TaskType) -> dict[str, Any]:
         rs = self.random_state
+        imb = self.handle_imbalance  # False keeps raw class priors => better calibrated probabilities
         factories = {
-            "linear": ("Linear Model", lambda: LinearTrainer(task_type=task_type, random_state=rs)),
+            "linear": (
+                "Linear Model",
+                lambda: LinearTrainer(task_type=task_type, random_state=rs, handle_imbalance=imb),
+            ),
             "random_forest": (
                 "Random Forest",
-                lambda: RandomForestTrainer(task_type=task_type, random_state=rs),
+                lambda: RandomForestTrainer(task_type=task_type, random_state=rs, handle_imbalance=imb),
             ),
-            "lightgbm": ("LightGBM", lambda: LGBMTrainer(task_type=task_type, random_state=rs)),
+            "lightgbm": (
+                "LightGBM",
+                lambda: LGBMTrainer(task_type=task_type, random_state=rs, handle_imbalance=imb),
+            ),
             "xgboost": ("XGBoost", lambda: XGBTrainer(task_type=task_type, random_state=rs)),
         }
         zoo: dict[str, Any] = {"Baseline (Dummy)": DummyTrainer(task_type=task_type)}

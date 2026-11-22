@@ -31,6 +31,7 @@ from mlkit.core.registry import get_step, list_steps
 from mlkit.core.report import Report
 from mlkit.features import DatetimeFeatures
 from mlkit.modelling import ModelArena, compute_bootstrap_ci, compute_metrics
+from mlkit.modelling.evaluation import AVAILABLE_METRICS, LOWER_IS_BETTER
 from mlkit.monitoring import DriftMonitor
 from mlkit.preprocessing import (
     CategoricalEncoder,
@@ -109,6 +110,7 @@ def build_default_pipeline(cfg: TaskConfig) -> Pipeline:
                 enforce_baseline_gate=cfg.baseline_gate,
                 random_state=cfg.seed,
                 candidates=modelling.get("candidates"),
+                handle_imbalance=bool(modelling.get("handle_imbalance", True)),
             ),
         ),
     ]
@@ -229,6 +231,17 @@ def split_data(X: pd.DataFrame, y: pd.Series, cfg: TaskConfig, arena_step: str |
     return Split(X_train, X_test, y_train, y_test, strategy, fit_params)
 
 
+def validate_metric_thresholds(cfg: TaskConfig) -> None:
+    """Fail fast on unknown metric names so a typo cannot silently disable the release gate."""
+    allowed = AVAILABLE_METRICS[cfg.task_type]
+    unknown = sorted(set(cfg.metric_thresholds) - allowed)
+    if unknown:
+        raise ValidationError(
+            f"Unknown metric(s) in metric_thresholds for {cfg.task_type}: {unknown}. "
+            f"Available: {sorted(allowed)}"
+        )
+
+
 def _scores(pipeline: Pipeline, X: pd.DataFrame, task_type: str) -> tuple[np.ndarray, np.ndarray | None]:
     preds = np.asarray(pipeline.predict(X))
     probs = None
@@ -267,6 +280,7 @@ def train(
     """Train, evaluate on a holdout, capture drift baselines and (optionally) save a bundle."""
     if cfg.target not in df.columns:
         raise ValidationError(f"Target column '{cfg.target}' not found in dataset columns: {list(df.columns)}")
+    validate_metric_thresholds(cfg)
 
     X = df.drop(columns=[cfg.target])
     y, target_info = prepare_target(df[cfg.target], cfg)
@@ -307,12 +321,16 @@ def train(
     failures = []
     for metric, threshold in cfg.metric_thresholds.items():
         value = metrics["holdout"].get(metric)
-        if value is None:
+        if value is None:  # validated up-front, so only possible if probabilities are unavailable
+            failures.append(f"{metric} could not be computed on the holdout set")
             continue
-        lower_is_better = metric in {"rmse", "mae"}
-        if (lower_is_better and value > threshold) or (not lower_is_better and value < threshold):
-            failures.append(f"{metric}={value:.4f} (threshold {threshold})")
+        if metric in LOWER_IS_BETTER:
+            if value > threshold:
+                failures.append(f"{metric}={value:.4f} (must be <= {threshold})")
+        elif value < threshold:
+            failures.append(f"{metric}={value:.4f} (must be >= {threshold})")
     metrics["thresholds_passed"] = not failures
+    metrics["threshold_failures"] = failures
     if failures:
         logger.warning("Metric thresholds not met: %s", "; ".join(failures))
 

@@ -11,6 +11,7 @@ from sklearn.base import BaseEstimator, clone
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import (
     accuracy_score,
+    brier_score_loss,
     f1_score,
     mean_absolute_error,
     mean_squared_error,
@@ -23,6 +24,35 @@ from sklearn.model_selection import GroupKFold, KFold, StratifiedKFold, TimeSeri
 
 from mlkit.core.config import TaskConfig
 from mlkit.core.errors import NotFittedError
+
+#: Metrics reported per task type (usable as keys of ``TaskConfig.metric_thresholds``).
+AVAILABLE_METRICS: dict[str, frozenset[str]] = {
+    "classification": frozenset(
+        {"accuracy", "precision", "recall", "f1", "roc_auc", "brier", "ece"}
+    ),
+    "regression": frozenset({"rmse", "mae", "r2"}),
+}
+
+#: Metrics where a smaller value is better (a threshold is then an upper bound).
+LOWER_IS_BETTER: frozenset[str] = frozenset({"rmse", "mae", "brier", "ece"})
+
+
+def expected_calibration_error(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float:
+    """Expected Calibration Error for binary probabilities (equal-width bins).
+
+    ECE = sum_b (n_b / n) * |mean(y in bin b) - mean(p in bin b)|; 0 means perfectly calibrated.
+    """
+    y = np.asarray(y_true, dtype=float).ravel()
+    p = np.asarray(y_prob, dtype=float).ravel()
+    if len(y) == 0:
+        return 0.0
+    idx = np.minimum((np.clip(p, 0.0, 1.0) * n_bins).astype(int), n_bins - 1)
+    ece = 0.0
+    for b in range(n_bins):
+        mask = idx == b
+        if mask.any():
+            ece += float(mask.mean()) * abs(float(y[mask].mean()) - float(p[mask].mean()))
+    return float(ece)
 
 
 def compute_metrics(
@@ -46,6 +76,10 @@ def compute_metrics(
                 metrics["roc_auc"] = float(roc_auc_score(y_true, probs))
             except Exception:
                 metrics["roc_auc"] = 0.5
+            # Probability quality (binary 0/1 targets only)
+            if set(np.unique(np.asarray(y_true))) <= {0, 1}:
+                metrics["brier"] = float(brier_score_loss(y_true, probs))
+                metrics["ece"] = expected_calibration_error(np.asarray(y_true), probs)
     else:
         metrics["rmse"] = float(np.sqrt(mean_squared_error(y_true, y_pred)))
         metrics["mae"] = float(mean_absolute_error(y_true, y_pred))

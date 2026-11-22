@@ -71,7 +71,11 @@ def cmd_run(
             log_to_mlflow(result, run_name=run_id)
 
         if not result.metrics.get("thresholds_passed", True):
-            logger.error("Holdout metrics did not meet metric_thresholds; bundle marked as failed gate.")
+            logger.error(
+                "Release gate failed: holdout metrics did not meet metric_thresholds (%s). "
+                "The bundle was still written; metrics.json has thresholds_passed=false.",
+                "; ".join(result.metrics.get("threshold_failures", [])),
+            )
             return 1
     return 0
 

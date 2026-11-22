@@ -52,6 +52,7 @@ def LGBM_SPACE(trial: Any) -> dict[str, Any]:
         "max_depth": trial.suggest_int("max_depth", 3, 10),
         "min_child_samples": trial.suggest_int("min_child_samples", 10, 100),
         "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+        "subsample_freq": 1,  # bagging is a no-op in LightGBM unless subsample_freq > 0
         "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
         "reg_alpha": trial.suggest_float("reg_alpha", 1e-4, 10.0, log=True),
         "reg_lambda": trial.suggest_float("reg_lambda", 1e-4, 10.0, log=True),
@@ -161,6 +162,8 @@ class OptunaSearch(BaseStep):
 
         def objective(trial: Any) -> float:
             params = self.space(trial)
+            # keep the *full* dict (incl. constants such as subsample_freq) for the final refit
+            trial.set_user_attr("params", params)
             estimator = self.estimator_cls(task_type=task_type, random_state=self.random_state, **params)
             try:
                 res = evaluator.evaluate(estimator, X, y_arr, cfg=cfg)
@@ -174,7 +177,8 @@ class OptunaSearch(BaseStep):
         study.optimize(objective, n_trials=self.n_trials, timeout=self.timeout, show_progress_bar=False)
 
         self.study_ = study
-        self.best_params_ = study.best_params
+        # study.best_params only holds suggested values; constants from the space live in user_attrs
+        self.best_params_ = dict(study.best_trial.user_attrs.get("params", study.best_params))
         self.best_score_ = study.best_value
 
         # Refit best model on full data

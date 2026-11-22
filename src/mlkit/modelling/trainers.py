@@ -1,4 +1,13 @@
-"""Model trainers supporting pandas DataFrame, unified predict_proba, and feature importances."""
+"""Model trainers supporting pandas DataFrame, unified predict_proba, and feature importances.
+
+All trainers share :class:`BaseTrainer`, which implements fitting plumbing, prediction,
+importances and sklearn parameter handling once. Subclasses only describe how to build
+the underlying estimator (``_build``).
+
+Extra keyword arguments (``**kwargs``) are forwarded to the underlying library estimator
+and are part of ``get_params()``, so ``sklearn.base.clone`` (used by cross-validation and
+Optuna tuning) preserves them.
+"""
 
 from __future__ import annotations
 
@@ -14,58 +23,112 @@ from sklearn.linear_model import LogisticRegression, Ridge
 from mlkit.core.errors import NotFittedError
 from mlkit.core.registry import register
 
+TaskType = Literal["classification", "regression"]
 
-@register("modelling.dummy")
-class DummyTrainer(BaseEstimator):
-    """Naive baseline estimator for baseline gating."""
 
-    def __init__(self, task_type: Literal["classification", "regression"] = "classification") -> None:
-        self.task_type = task_type
-        self._estimator: Any = None
-        self._is_fitted: bool = False
-        self.feature_names_in_: list[str] = []
+class BaseTrainer(BaseEstimator):
+    """Shared implementation for all mlkit model trainers."""
 
-    def fit(self, X: pd.DataFrame | np.ndarray, y: Any) -> DummyTrainer:
+    task_type: TaskType | None = None  # None => infer from the wrapped estimator
+    kwargs: dict[str, Any]
+
+    # ----------------------------------------------------- sklearn params
+    def get_params(self, deep: bool = True) -> dict[str, Any]:
+        params = super().get_params(deep=deep)
+        params.update(getattr(self, "kwargs", {}) or {})
+        return params
+
+    def set_params(self, **params: Any) -> BaseTrainer:
+        explicit = set(self._get_param_names())
+        extra = {k: v for k, v in params.items() if k not in explicit}
+        super().set_params(**{k: v for k, v in params.items() if k in explicit})
+        if extra:
+            if not hasattr(self, "kwargs"):
+                raise ValueError(f"{type(self).__name__} does not accept extra parameters: {sorted(extra)}")
+            self.kwargs = {**self.kwargs, **extra}
+        return self
+
+    # ------------------------------------------------------------ fitting
+    def _build(self, y: np.ndarray) -> Any:
+        """Return an unfitted library estimator for target ``y``."""
+        raise NotImplementedError
+
+    def fit(self, X: pd.DataFrame | np.ndarray, y: Any) -> BaseTrainer:
         df = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
         self.feature_names_in_ = [str(c) for c in df.columns]
         y_arr = np.asarray(y)
-
-        if self.task_type == "classification":
-            self._estimator = DummyClassifier(strategy="prior")
-        else:
-            self._estimator = DummyRegressor(strategy="mean")
-
+        self._estimator = self._build(y_arr)
         self._estimator.fit(df, y_arr)
         self._is_fitted = True
         return self
 
+    def _check_fitted(self) -> None:
+        if not getattr(self, "_is_fitted", False):
+            raise NotFittedError(f"{type(self).__name__} is not fitted.")
+
+    # --------------------------------------------------------- prediction
     def predict(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
-        if not self._is_fitted:
-            raise NotFittedError("DummyTrainer is not fitted.")
+        self._check_fitted()
         return self._estimator.predict(X)
 
     def predict_proba(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
-        if not self._is_fitted:
-            raise NotFittedError("DummyTrainer is not fitted.")
-        if self.task_type != "classification":
+        self._check_fitted()
+        if self.task_type == "regression":
             raise AttributeError("predict_proba is only available for classification.")
+        if not hasattr(self._estimator, "predict_proba"):
+            raise AttributeError(f"{type(self._estimator).__name__} does not support predict_proba.")
         return self._estimator.predict_proba(X)
 
     @property
     def feature_importances_(self) -> np.ndarray:
+        """Native importances, |coef| (averaged over classes) for linear models, else zeros."""
+        if not getattr(self, "_is_fitted", False):
+            return np.array([])
+        est = self._estimator
+        if hasattr(est, "feature_importances_"):
+            return np.asarray(est.feature_importances_)
+        coef = getattr(est, "coef_", None)
+        if coef is not None:
+            coef_arr = np.abs(np.asarray(coef))
+            return coef_arr if coef_arr.ndim == 1 else coef_arr.mean(axis=0)
         return np.zeros(len(self.feature_names_in_))
+
+    def __sklearn_is_fitted__(self) -> bool:
+        return bool(getattr(self, "_is_fitted", False))
+
+
+def _binary_pos_weight(y: np.ndarray) -> float | None:
+    """neg/pos ratio for binary targets (used as ``scale_pos_weight``), else None."""
+    classes = np.unique(y[~pd.isna(y)])
+    if len(classes) != 2:
+        return None
+    pos = np.sum(y == classes[1])
+    return float(np.sum(y == classes[0]) / pos) if pos > 0 else None
+
+
+@register("modelling.dummy")
+class DummyTrainer(BaseTrainer):
+    """Naive baseline estimator for baseline gating."""
+
+    def __init__(self, task_type: TaskType = "classification") -> None:
+        self.task_type = task_type
+
+    def _build(self, y: np.ndarray) -> Any:
+        if self.task_type == "classification":
+            return DummyClassifier(strategy="prior")
+        return DummyRegressor(strategy="mean")
 
 
 @register("modelling.linear")
-class LinearTrainer(BaseEstimator):
-    """Linear / Logistic model trainer with auto balancing and weight importances."""
+class LinearTrainer(BaseTrainer):
+    """Logistic regression (classification) or Ridge (regression, ``alpha = 1/C``)."""
 
     def __init__(
         self,
         C: float = 1.0,
         max_iter: int = 1000,
         handle_imbalance: bool = True,
-        task_type: Literal["classification", "regression"] = "classification",
+        task_type: TaskType = "classification",
         random_state: int = 42,
         **kwargs: Any,
     ) -> None:
@@ -76,17 +139,9 @@ class LinearTrainer(BaseEstimator):
         self.random_state = random_state
         self.kwargs = kwargs
 
-        self._estimator: Any = None
-        self._is_fitted: bool = False
-        self.feature_names_in_: list[str] = []
-
-    def fit(self, X: pd.DataFrame | np.ndarray, y: Any) -> LinearTrainer:
-        df = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
-        self.feature_names_in_ = [str(c) for c in df.columns]
-        y_arr = np.asarray(y)
-
+    def _build(self, y: np.ndarray) -> Any:
         if self.task_type == "classification":
-            params = {
+            params: dict[str, Any] = {
                 "C": self.C,
                 "max_iter": self.max_iter,
                 "random_state": self.random_state,
@@ -94,42 +149,12 @@ class LinearTrainer(BaseEstimator):
             }
             if self.handle_imbalance:
                 params["class_weight"] = "balanced"
-            self._estimator = LogisticRegression(**params)
-        else:
-            alpha = 1.0 / max(self.C, 1e-5)
-            self._estimator = Ridge(alpha=alpha, random_state=self.random_state, **self.kwargs)
-
-        self._estimator.fit(df, y_arr)
-        self._is_fitted = True
-        return self
-
-    def predict(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
-        if not self._is_fitted:
-            raise NotFittedError("LinearTrainer is not fitted.")
-        return self._estimator.predict(X)
-
-    def predict_proba(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
-        if not self._is_fitted:
-            raise NotFittedError("LinearTrainer is not fitted.")
-        if self.task_type != "classification":
-            raise AttributeError("predict_proba is only available for classification.")
-        return self._estimator.predict_proba(X)
-
-    @property
-    def feature_importances_(self) -> np.ndarray:
-        if not self._is_fitted:
-            return np.array([])
-        coef = getattr(self._estimator, "coef_", None)
-        if coef is None:
-            return np.array([])
-        coef_arr = np.asarray(coef)
-        if coef_arr.ndim == 1:
-            return np.abs(coef_arr)
-        return np.mean(np.abs(coef_arr), axis=0)
+            return LogisticRegression(**params)
+        return Ridge(alpha=1.0 / max(self.C, 1e-5), random_state=self.random_state, **self.kwargs)
 
 
 @register("modelling.random_forest")
-class RandomForestTrainer(BaseEstimator):
+class RandomForestTrainer(BaseTrainer):
     """Random Forest trainer supporting both classification and regression."""
 
     def __init__(
@@ -138,7 +163,7 @@ class RandomForestTrainer(BaseEstimator):
         max_depth: int | None = None,
         min_samples_split: int = 2,
         handle_imbalance: bool = True,
-        task_type: Literal["classification", "regression"] = "classification",
+        task_type: TaskType = "classification",
         random_state: int = 42,
         **kwargs: Any,
     ) -> None:
@@ -150,56 +175,24 @@ class RandomForestTrainer(BaseEstimator):
         self.random_state = random_state
         self.kwargs = kwargs
 
-        self._estimator: Any = None
-        self._is_fitted: bool = False
-        self.feature_names_in_: list[str] = []
-
-    def fit(self, X: pd.DataFrame | np.ndarray, y: Any) -> RandomForestTrainer:
-        df = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
-        self.feature_names_in_ = [str(c) for c in df.columns]
-        y_arr = np.asarray(y)
-
-        params = {
+    def _build(self, y: np.ndarray) -> Any:
+        params: dict[str, Any] = {
             "n_estimators": self.n_estimators,
             "max_depth": self.max_depth,
             "min_samples_split": self.min_samples_split,
             "random_state": self.random_state,
             **self.kwargs,
         }
-
         if self.task_type == "classification":
             if self.handle_imbalance:
                 params["class_weight"] = "balanced"
-            self._estimator = RandomForestClassifier(**params)
-        else:
-            self._estimator = RandomForestRegressor(**params)
-
-        self._estimator.fit(df, y_arr)
-        self._is_fitted = True
-        return self
-
-    def predict(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
-        if not self._is_fitted:
-            raise NotFittedError("RandomForestTrainer is not fitted.")
-        return self._estimator.predict(X)
-
-    def predict_proba(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
-        if not self._is_fitted:
-            raise NotFittedError("RandomForestTrainer is not fitted.")
-        if self.task_type != "classification":
-            raise AttributeError("predict_proba is only available for classification.")
-        return self._estimator.predict_proba(X)
-
-    @property
-    def feature_importances_(self) -> np.ndarray:
-        if not self._is_fitted:
-            return np.array([])
-        return getattr(self._estimator, "feature_importances_", np.array([]))
+            return RandomForestClassifier(**params)
+        return RandomForestRegressor(**params)
 
 
 @register("modelling.lightgbm")
-class LGBMTrainer(BaseEstimator):
-    """LightGBM wrapper with automatic DataFrame compatibility."""
+class LGBMTrainer(BaseTrainer):
+    """LightGBM wrapper; binary imbalance handled with ``scale_pos_weight``."""
 
     def __init__(
         self,
@@ -207,7 +200,7 @@ class LGBMTrainer(BaseEstimator):
         learning_rate: float = 0.05,
         num_leaves: int = 31,
         max_depth: int = -1,
-        task_type: Literal["classification", "regression"] = "classification",
+        task_type: TaskType = "classification",
         handle_imbalance: bool = True,
         random_state: int = 42,
         **kwargs: Any,
@@ -221,16 +214,8 @@ class LGBMTrainer(BaseEstimator):
         self.random_state = random_state
         self.kwargs = kwargs
 
-        self._estimator: Any = None
-        self._is_fitted: bool = False
-        self.feature_names_in_: list[str] = []
-
-    def fit(self, X: pd.DataFrame | np.ndarray, y: Any) -> LGBMTrainer:
+    def _build(self, y: np.ndarray) -> Any:
         import lightgbm as lgb
-
-        df = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
-        self.feature_names_in_ = [str(c) for c in df.columns]
-        y_arr = np.asarray(y)
 
         params: dict[str, Any] = {
             "n_estimators": self.n_estimators,
@@ -241,51 +226,24 @@ class LGBMTrainer(BaseEstimator):
             "verbosity": -1,
             **self.kwargs,
         }
-
         if self.task_type == "classification":
-            unique_targets = np.unique(y_arr[~pd.isna(y_arr)])
-            if self.handle_imbalance and len(unique_targets) == 2:
-                neg_count = np.sum(y_arr == unique_targets[0])
-                pos_count = np.sum(y_arr == unique_targets[1])
-                if pos_count > 0:
-                    params["scale_pos_weight"] = float(neg_count / pos_count)
-            self._estimator = lgb.LGBMClassifier(**params)
-        else:
-            self._estimator = lgb.LGBMRegressor(**params)
-
-        self._estimator.fit(df, y_arr)
-        self._is_fitted = True
-        return self
-
-    def predict(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
-        if not self._is_fitted:
-            raise NotFittedError("LGBMTrainer is not fitted.")
-        return self._estimator.predict(X)
-
-    def predict_proba(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
-        if not self._is_fitted:
-            raise NotFittedError("LGBMTrainer is not fitted.")
-        if self.task_type != "classification":
-            raise AttributeError("predict_proba is only available for classification.")
-        return self._estimator.predict_proba(X)
-
-    @property
-    def feature_importances_(self) -> np.ndarray:
-        if not self._is_fitted:
-            return np.array([])
-        return getattr(self._estimator, "feature_importances_", np.array([]))
+            weight = _binary_pos_weight(y) if self.handle_imbalance else None
+            if weight is not None:
+                params["scale_pos_weight"] = weight
+            return lgb.LGBMClassifier(**params)
+        return lgb.LGBMRegressor(**params)
 
 
 @register("modelling.xgboost")
-class XGBTrainer(BaseEstimator):
-    """XGBoost wrapper with native DataFrame support."""
+class XGBTrainer(BaseTrainer):
+    """XGBoost wrapper with native DataFrame support (requires the ``xgboost`` extra)."""
 
     def __init__(
         self,
         n_estimators: int = 150,
         learning_rate: float = 0.05,
         max_depth: int = 6,
-        task_type: Literal["classification", "regression"] = "classification",
+        task_type: TaskType = "classification",
         random_state: int = 42,
         **kwargs: Any,
     ) -> None:
@@ -296,18 +254,10 @@ class XGBTrainer(BaseEstimator):
         self.random_state = random_state
         self.kwargs = kwargs
 
-        self._estimator: Any = None
-        self._is_fitted: bool = False
-        self.feature_names_in_: list[str] = []
-
-    def fit(self, X: pd.DataFrame | np.ndarray, y: Any) -> XGBTrainer:
+    def _build(self, y: np.ndarray) -> Any:
         import xgboost as xgb
 
-        df = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
-        self.feature_names_in_ = [str(c) for c in df.columns]
-        y_arr = np.asarray(y)
-
-        params = {
+        params: dict[str, Any] = {
             "n_estimators": self.n_estimators,
             "learning_rate": self.learning_rate,
             "max_depth": self.max_depth,
@@ -315,74 +265,19 @@ class XGBTrainer(BaseEstimator):
             "enable_categorical": True,
             **self.kwargs,
         }
-
         if self.task_type == "classification":
-            self._estimator = xgb.XGBClassifier(**params)
-        else:
-            self._estimator = xgb.XGBRegressor(**params)
-
-        self._estimator.fit(df, y_arr)
-        self._is_fitted = True
-        return self
-
-    def predict(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
-        if not self._is_fitted:
-            raise NotFittedError("XGBTrainer is not fitted.")
-        return self._estimator.predict(X)
-
-    def predict_proba(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
-        if not self._is_fitted:
-            raise NotFittedError("XGBTrainer is not fitted.")
-        if self.task_type != "classification":
-            raise AttributeError("predict_proba is only available for classification.")
-        return self._estimator.predict_proba(X)
-
-    @property
-    def feature_importances_(self) -> np.ndarray:
-        if not self._is_fitted:
-            return np.array([])
-        return getattr(self._estimator, "feature_importances_", np.array([]))
+            return xgb.XGBClassifier(**params)
+        return xgb.XGBRegressor(**params)
 
 
 @register("modelling.sklearn_wrapper")
-class SklearnModelWrapper(BaseEstimator):
-    """Generic wrapper for any custom scikit-learn estimator."""
+class SklearnModelWrapper(BaseTrainer):
+    """Generic wrapper for any scikit-learn compatible estimator."""
 
     def __init__(self, estimator: Any = None) -> None:
         self.estimator = estimator
-        self._estimator: Any = None
-        self._is_fitted: bool = False
-        self.feature_names_in_: list[str] = []
 
-    def fit(self, X: pd.DataFrame | np.ndarray, y: Any) -> SklearnModelWrapper:
+    def _build(self, y: np.ndarray) -> Any:
         if self.estimator is None:
             raise ValueError("An estimator instance must be provided.")
-        df = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
-        self.feature_names_in_ = [str(c) for c in df.columns]
-        self._estimator = clone(self.estimator)
-        self._estimator.fit(df, np.asarray(y))
-        self._is_fitted = True
-        return self
-
-    def predict(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
-        if not self._is_fitted:
-            raise NotFittedError("SklearnModelWrapper is not fitted.")
-        return self._estimator.predict(X)
-
-    def predict_proba(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
-        if not self._is_fitted:
-            raise NotFittedError("SklearnModelWrapper is not fitted.")
-        if hasattr(self._estimator, "predict_proba"):
-            return self._estimator.predict_proba(X)
-        raise AttributeError(f"{type(self._estimator).__name__} does not support predict_proba.")
-
-    @property
-    def feature_importances_(self) -> np.ndarray:
-        if not self._is_fitted:
-            return np.array([])
-        if hasattr(self._estimator, "feature_importances_"):
-            return np.asarray(self._estimator.feature_importances_)
-        elif hasattr(self._estimator, "coef_"):
-            coef = np.asarray(self._estimator.coef_)
-            return np.abs(coef) if coef.ndim == 1 else np.mean(np.abs(coef), axis=0)
-        return np.array([])
+        return clone(self.estimator)

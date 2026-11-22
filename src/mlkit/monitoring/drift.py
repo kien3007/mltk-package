@@ -106,6 +106,7 @@ class DriftMonitor(BaseStep):
         sample_size: int = 5000,
         unseen_threshold_warn: float = 0.05,
         random_state: int = 42,
+        exclude: list[str] | None = None,
     ) -> None:
         super().__init__()
         self.psi_threshold_warn = psi_threshold_warn
@@ -115,6 +116,7 @@ class DriftMonitor(BaseStep):
         self.sample_size = sample_size
         self.unseen_threshold_warn = unseen_threshold_warn
         self.random_state = random_state
+        self.exclude = exclude
 
         self.numeric_baselines_: dict[str, dict[str, Any]] = {}
         self.categorical_baselines_: dict[str, dict[str, float]] = {}
@@ -142,6 +144,8 @@ class DriftMonitor(BaseStep):
         self.categorical_baselines_ = {}
         self.categorical_counts_ = {}
 
+        excluded = set(self.exclude or [])
+        X = X.drop(columns=[c for c in X.columns if c in excluded])
         num_cols = [c for c in X.columns if pd.api.types.is_numeric_dtype(X[c]) and not pd.api.types.is_bool_dtype(X[c])]
         for c in num_cols:
             self.numeric_baselines_[str(c)] = self._numeric_snapshot(X[c].to_numpy(dtype=float))
@@ -181,6 +185,7 @@ class DriftMonitor(BaseStep):
                 "num_buckets": self.num_buckets,
                 "sample_size": self.sample_size,
                 "unseen_threshold_warn": self.unseen_threshold_warn,
+                "exclude": self.exclude,
             },
             "numeric": self.numeric_baselines_,
             "categorical": self.categorical_baselines_,
