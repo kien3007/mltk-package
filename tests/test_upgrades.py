@@ -22,7 +22,7 @@ primary_df = pd.DataFrame({
 trans_records = []
 for acc in primary_df["account_id"]:
     n_trans = rng.integers(1, 10)
-    for t in range(n_trans):
+    for _t in range(n_trans):
         trans_records.append({
             "account_id": acc,
             "amount": float(rng.uniform(10, 500)),

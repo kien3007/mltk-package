@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any, Literal
 
 import numpy as np
@@ -72,15 +73,34 @@ class CVEvaluator:
         X: pd.DataFrame,
         y: Any,
         cfg: TaskConfig | None = None,
+        groups: Any = None,
+        time_index: Any = None,
     ) -> dict[str, Any]:
-        """Run k-fold cross validation and return aggregated metrics."""
+        """Run k-fold cross validation and return aggregated metrics.
+
+        Split selection (first match wins):
+        - ``groups`` given (or ``cfg.group_col`` present in X) -> GroupKFold
+        - ``time_index`` given (or ``cfg.time_col`` set) -> TimeSeriesSplit on rows
+          ordered chronologically (rows are sorted by ``time_index`` / ``cfg.time_col``
+          when available, otherwise assumed to be already ordered)
+        - classification -> StratifiedKFold, regression -> KFold
+        """
         y_arr = np.asarray(y)
+        if groups is None and cfg and cfg.group_col and cfg.group_col in X.columns:
+            groups = X[cfg.group_col]
+        if time_index is None and cfg and cfg.time_col and cfg.time_col in X.columns:
+            time_index = X[cfg.time_col]
 
         # Determine splitter
-        if cfg and cfg.group_col and cfg.group_col in X.columns:
-            groups = X[cfg.group_col]
-            cv_splitter = GroupKFold(n_splits=self.cv).split(X, y_arr, groups=groups)
-        elif cfg and cfg.time_col:
+        if groups is not None:
+            groups_arr = np.asarray(groups)
+            n_groups = len(np.unique(groups_arr))
+            cv_splitter = GroupKFold(n_splits=min(self.cv, n_groups)).split(X, y_arr, groups=groups_arr)
+        elif time_index is not None or (cfg and cfg.time_col):
+            if time_index is not None:
+                order = np.argsort(pd.to_datetime(pd.Series(np.asarray(time_index)), errors="coerce").to_numpy(), kind="stable")
+                X = X.iloc[order]
+                y_arr = y_arr[order]
             cv_splitter = TimeSeriesSplit(n_splits=self.cv).split(X)
         elif self.task_type == "classification":
             cv_splitter = StratifiedKFold(n_splits=self.cv, shuffle=True, random_state=self.random_state).split(
@@ -100,17 +120,15 @@ class CVEvaluator:
 
             probs = None
             if self.task_type == "classification" and hasattr(model, "predict_proba"):
-                try:
+                with contextlib.suppress(Exception):
                     probs = model.predict_proba(X_val)
-                except Exception:
-                    pass
 
             m = compute_metrics(y_val, preds, probs, task_type=self.task_type)
             fold_metrics.append(m)
 
         summary: dict[str, Any] = {"folds": fold_metrics}
         primary_metric = "roc_auc" if self.task_type == "classification" else "rmse"
-        for k in fold_metrics[0].keys():
+        for k in fold_metrics[0]:
             vals = [f[k] for f in fold_metrics]
             summary[f"{k}_mean"] = float(np.mean(vals))
             summary[f"{k}_std"] = float(np.std(vals))

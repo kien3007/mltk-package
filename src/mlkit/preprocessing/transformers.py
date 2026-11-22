@@ -21,27 +21,42 @@ class TypeCaster(BaseStep):
         self,
         dtypes: dict[str, str] | None = None,
         drop_id: bool = True,
+        drop_cols: list[str] | None = None,
+        drop_group_col: bool = True,
     ) -> None:
         super().__init__()
         self.dtypes = dtypes
         self.drop_id = drop_id
+        self.drop_cols = drop_cols
+        self.drop_group_col = drop_group_col
         self.inferred_dtypes_: dict[str, str] = {}
         self.dropped_cols_: list[str] = []
 
     def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> TypeCaster:
+        self.inferred_dtypes_ = {}
+        self.dropped_cols_ = [c for c in (self.drop_cols or []) if c in X.columns]
         id_col = cfg.id_col if cfg else None
-        if self.drop_id and id_col and id_col in X.columns:
+        if self.drop_id and id_col and id_col in X.columns and id_col not in self.dropped_cols_:
             self.dropped_cols_.append(id_col)
+        group_col = cfg.group_col if cfg else None
+        if (
+            self.drop_group_col
+            and group_col
+            and group_col in X.columns
+            and group_col not in self.dropped_cols_
+        ):
+            # Group keys are split keys, not features: keeping them leaks identity across folds.
+            self.dropped_cols_.append(group_col)
 
         # Detect prospective ID columns by name or uniqueness
         for c in X.columns:
-            if c not in self.dropped_cols_:
-                if c.lower() == "id" or (
-                    (X[c].dtype == object or pd.api.types.is_string_dtype(X[c]))
-                    and X[c].nunique() == len(X)
-                    and "id" in c.lower()
-                ):
-                    self.dropped_cols_.append(c)
+            looks_like_id = str(c).lower() == "id" or (
+                (X[c].dtype == object or pd.api.types.is_string_dtype(X[c]))
+                and X[c].nunique() == len(X)
+                and "id" in str(c).lower()
+            )
+            if self.drop_id and c not in self.dropped_cols_ and looks_like_id:
+                self.dropped_cols_.append(c)
 
         for col in X.columns:
             if col in self.dropped_cols_:
@@ -68,7 +83,9 @@ class TypeCaster(BaseStep):
             if col in out.columns:
                 try:
                     if target_dtype == "category":
-                        out[col] = out[col].astype(str).astype("category")
+                        # keep missing values as NaN (not the string "nan") for the imputer
+                        col_s = out[col]
+                        out[col] = col_s.where(col_s.isna(), col_s.astype(str)).astype("category")
                     else:
                         out[col] = out[col].astype(target_dtype)
                 except Exception:
@@ -100,6 +117,7 @@ class MissingImputer(BaseStep):
 
     def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> MissingImputer:
         self.fill_values_ = {}
+        self.indicator_cols_ = []
         self.numeric_cols_ = list(X.select_dtypes(include=[np.number]).columns)
         self.categorical_cols_ = [c for c in X.columns if c not in self.numeric_cols_]
 
@@ -146,7 +164,11 @@ class MissingImputer(BaseStep):
 
         for col, fill_val in self.fill_values_.items():
             if col in out.columns:
-                out[col] = out[col].fillna(fill_val)
+                if isinstance(out[col].dtype, pd.CategoricalDtype):
+                    # the fill value may not be a category of this batch (e.g. all-unseen values)
+                    out[col] = out[col].astype(object).fillna(fill_val).astype("category")
+                else:
+                    out[col] = out[col].fillna(fill_val)
         return out
 
 
@@ -183,11 +205,8 @@ class RareCategoryGrouper(BaseStep):
         out = X.copy()
         for col, frequent in self.frequent_categories_.items():
             if col in out.columns:
-                out[col] = (
-                    out[col]
-                    .astype(str)
-                    .apply(lambda val: val if val in frequent else self.rare_label)
-                )
+                values = out[col].astype(str)
+                out[col] = values.where(values.isin(list(frequent)), self.rare_label)
         return out
 
 
@@ -195,9 +214,14 @@ class RareCategoryGrouper(BaseStep):
 class CategoricalEncoder(BaseStep):
     """
     Adaptive categorical encoding:
-    - Low cardinality (< 10): One-Hot
-    - Mid cardinality (10–50): Ordinal
-    - High cardinality (> 50): Out-of-fold Target Encoding
+    - Low cardinality (<= ``low_card_threshold``): One-Hot
+    - Mid cardinality (<= ``high_card_threshold``): Ordinal
+    - High cardinality: smoothed Target Encoding. During ``fit_transform`` the training
+      rows receive **out-of-fold** encodings (K-fold), so a row never sees its own target.
+      ``transform`` on new data uses the mapping fitted on the full training set.
+
+    Target encoding is only used for regression and binary targets (ADR-004). For
+    multiclass targets, high-cardinality columns fall back to ordinal encoding.
     """
 
     def __init__(
@@ -217,53 +241,73 @@ class CategoricalEncoder(BaseStep):
 
         self.encoding_plan_: dict[str, str] = {}
         self.onehot_categories_: dict[str, list[str]] = {}
-        self.ordinal_maps_: dict[str, dict[str, int]] = {}
+        self.ordinal_maps_: dict[str, dict[str, int]] = {}  # category -> code
         self.target_maps_: dict[str, dict[str, float]] = {}
         self.global_target_mean_: float = 0.0
+        self._y_numeric: np.ndarray | None = None
+
+    @staticmethod
+    def _target_to_numeric(y: Any) -> np.ndarray | None:
+        """Map target to floats; returns None when target encoding is not meaningful."""
+        y_arr = np.asarray(y)
+        if pd.api.types.is_numeric_dtype(y_arr) and not pd.api.types.is_bool_dtype(y_arr):
+            y_float = y_arr.astype(float)
+            uniques = np.unique(y_float[~np.isnan(y_float)])
+            is_integer_labels = np.all(np.mod(uniques, 1) == 0)
+            if is_integer_labels and 2 < len(uniques) <= 20 and uniques.min() >= 0:
+                # Looks like multiclass labels: a mean over class indices is meaningless.
+                return None
+            return y_float
+        mask = ~pd.isna(y_arr)
+        uniques = np.unique(y_arr[mask].astype(str))
+        if len(uniques) != 2:
+            return None
+        out = np.full(len(y_arr), np.nan)
+        out[mask] = (y_arr[mask].astype(str) == uniques[1]).astype(float)
+        return out
+
+    def _smoothed_map(self, keys: pd.Series, y_num: np.ndarray, prior: float) -> dict[str, float]:
+        df = pd.DataFrame({"k": keys.to_numpy(), "_y": y_num}).dropna(subset=["_y"])
+        stats = df.groupby("k")["_y"].agg(["count", "mean"])
+        smoothed = (stats["count"] * stats["mean"] + self.smoothing * prior) / (
+            stats["count"] + self.smoothing
+        )
+        return {str(k): float(v) for k, v in smoothed.items()}
 
     def _fit(
         self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None
     ) -> CategoricalEncoder:
-        cat_cols = list(X.select_dtypes(include=["object", "category"]).columns)
+        cat_cols = list(X.select_dtypes(include=["object", "category", "string"]).columns)
         self.encoding_plan_ = {}
-        y_arr = np.asarray(y) if y is not None else None
-        if y_arr is not None:
-            if not pd.api.types.is_numeric_dtype(y_arr):
-                unique_y = np.unique(y_arr[~pd.isna(y_arr)])
-                y_num = np.zeros(len(y_arr), dtype=float)
-                for i, u in enumerate(unique_y):
-                    y_num[y_arr == u] = float(i)
-                self.global_target_mean_ = float(np.nanmean(y_num))
-                y_fit = y_num
-            else:
-                y_fit = y_arr.astype(float)
-                self.global_target_mean_ = float(np.nanmean(y_fit))
-        else:
-            y_fit = None
+        self.onehot_categories_ = {}
+        self.ordinal_maps_ = {}
+        self.target_maps_ = {}
+
+        y_num = self._target_to_numeric(y) if y is not None else None
+        if cfg is not None and cfg.task_type == "regression" and y is not None:
+            y_num = np.asarray(y, dtype=float)
+        if y is not None and y_num is None:
+            self.report_.add(
+                "categorical_encoder_target",
+                "warn",
+                "Target is multiclass/non-numeric; target encoding disabled (ordinal fallback).",
+            )
+        self._y_numeric = y_num
+        self.global_target_mean_ = float(np.nanmean(y_num)) if y_num is not None else 0.0
 
         for col in cat_cols:
             n_unique = X[col].nunique(dropna=False)
             if n_unique <= self.low_card_threshold:
                 strategy = "onehot"
-                cats = [str(val) for val in X[col].dropna().unique()]
-                self.onehot_categories_[col] = cats
-            elif n_unique <= self.high_card_threshold or y_arr is None:
+                self.onehot_categories_[col] = [str(v) for v in X[col].dropna().unique()]
+            elif n_unique <= self.high_card_threshold or y_num is None:
                 strategy = "ordinal"
-                cats = [str(val) for val in X[col].dropna().unique()]
+                cats = [str(v) for v in X[col].dropna().unique()]
                 self.ordinal_maps_[col] = {val: idx for idx, val in enumerate(cats)}
             else:
                 strategy = "target"
-                # Compute smoothed global target encodings
-                df_col = X[[col]].copy()
-                df_col["_y"] = y_fit
-                stats = df_col.groupby(col, observed=True)["_y"].agg(["count", "mean"])
-                counts = stats["count"]
-                means = stats["mean"]
-                smoothed = (counts * means + self.smoothing * self.global_target_mean_) / (
-                    counts + self.smoothing
-                )
-                self.target_maps_[col] = smoothed.to_dict()
-
+                keys = X[col].astype(str)
+                self.target_maps_[col] = self._smoothed_map(keys, y_num, self.global_target_mean_)
             self.encoding_plan_[col] = strategy
 
         self.report_.add(
@@ -272,6 +316,33 @@ class CategoricalEncoder(BaseStep):
             f"Encoded {len(self.encoding_plan_)} columns: {self.encoding_plan_}",
         )
         return self
+
+    def _fit_transform_train(self, X: pd.DataFrame, y: Any) -> pd.DataFrame | None:
+        target_cols = [c for c, s in self.encoding_plan_.items() if s == "target"]
+        y_num = self._y_numeric
+        self._y_numeric = None  # never persist the training target inside a bundle
+        if not target_cols or y_num is None:
+            return None
+
+        from sklearn.model_selection import KFold
+
+        out = self.transform(X)
+        n_splits = max(2, min(self.cv, len(X)))
+        kf = KFold(n_splits=n_splits, shuffle=True, random_state=self.random_state)
+        for col in target_cols:
+            keys = X[col].astype(str).reset_index(drop=True)
+            oof = np.full(len(X), np.nan)
+            for tr_idx, val_idx in kf.split(keys):
+                prior = float(np.nanmean(y_num[tr_idx]))
+                fold_map = self._smoothed_map(keys.iloc[tr_idx], y_num[tr_idx], prior)
+                oof[val_idx] = keys.iloc[val_idx].map(fold_map).astype(float).fillna(prior).to_numpy()
+            out[col] = oof
+        self.report_.add(
+            "target_encoding_oof",
+            "ok",
+            f"Applied {n_splits}-fold out-of-fold target encoding to training rows: {target_cols}",
+        )
+        return out
 
     def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
         out = X.copy()
@@ -290,8 +361,10 @@ class CategoricalEncoder(BaseStep):
                 out[col] = out[col].astype(str).map(col_map).fillna(-1).astype(int)
 
             elif strategy == "target":
-                col_map = self.target_maps_.get(col, {})
-                out[col] = out[col].astype(str).map(col_map).fillna(self.global_target_mean_)
+                te_map = self.target_maps_.get(col, {})
+                out[col] = (
+                    out[col].astype(str).map(te_map).astype(float).fillna(self.global_target_mean_)
+                )
 
         return out
 
