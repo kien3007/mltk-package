@@ -11,11 +11,33 @@ from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
 from mlkit.core.config import TaskConfig
 from mlkit.core.registry import register
 from mlkit.core.step import BaseStep
+from mlkit.qc_eda.profile import (
+    ProfileOptions,
+    coerce_boolean,
+    coerce_datetime,
+    coerce_numeric,
+    normalize_missing,
+    profile_dataframe,
+)
 
 
 @register("preprocessing.type_caster")
 class TypeCaster(BaseStep):
-    """Cast column types, drop ID column, and normalize strings."""
+    """Schema-driven type casting based on the shared column profile.
+
+    At ``fit`` every column is profiled (:func:`mlkit.qc_eda.profile.infer_column`) and a cast
+    plan is frozen, so ``transform`` applies the *same* conversions to new data:
+
+    - numbers stored as text ("1,234", "$5", "12%", "3,5") -> float
+    - yes/no, true/false, y/n -> 0/1
+    - date strings -> datetime64 (expanded later by ``DatetimeFeatures``)
+    - disguised missing tokens ("n/a", "null", "-") and +/-inf -> NaN
+    - categorical / text -> pandas ``category`` (text keeps ``object`` for ``TextFeatures``)
+    - dropped: identifiers, empty and constant columns, duplicated columns, ``cfg.id_col``,
+      ``cfg.group_col`` and ``cfg.time_col`` (see the ``drop_*`` switches) and ``drop_cols``
+
+    ``dtypes`` forces a dtype per column ({"zip": "category"}); forced columns are never dropped.
+    """
 
     def __init__(
         self,
@@ -24,6 +46,9 @@ class TypeCaster(BaseStep):
         drop_cols: list[str] | None = None,
         drop_group_col: bool = True,
         drop_time_col: bool = True,
+        drop_constant: bool = True,
+        drop_duplicate_columns: bool = True,
+        profile_options: ProfileOptions | None = None,
     ) -> None:
         super().__init__()
         self.dtypes = dtypes
@@ -31,55 +56,86 @@ class TypeCaster(BaseStep):
         self.drop_cols = drop_cols
         self.drop_group_col = drop_group_col
         self.drop_time_col = drop_time_col
+        self.drop_constant = drop_constant
+        self.drop_duplicate_columns = drop_duplicate_columns
+        self.profile_options = profile_options
         self.inferred_dtypes_: dict[str, str] = {}
         self.dropped_cols_: list[str] = []
+        self.drop_reasons_: dict[str, str] = {}
+        self.semantic_types_: dict[str, str] = {}
+
+    def _drop(self, col: Any, reason: str) -> None:
+        if col not in self.dropped_cols_:
+            self.dropped_cols_.append(col)
+            self.drop_reasons_[str(col)] = reason
 
     def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> TypeCaster:
         self.inferred_dtypes_ = {}
-        self.dropped_cols_ = [c for c in (self.drop_cols or []) if c in X.columns]
-        id_col = cfg.id_col if cfg else None
-        if self.drop_id and id_col and id_col in X.columns and id_col not in self.dropped_cols_:
-            self.dropped_cols_.append(id_col)
-        group_col = cfg.group_col if cfg else None
-        if (
-            self.drop_group_col
-            and group_col
-            and group_col in X.columns
-            and group_col not in self.dropped_cols_
-        ):
-            # Group keys are split keys, not features: keeping them leaks identity across folds.
-            self.dropped_cols_.append(group_col)
-        time_col = cfg.time_col if cfg else None
-        if (
-            self.drop_time_col
-            and time_col
-            and time_col in X.columns
-            and time_col not in self.dropped_cols_
-        ):
-            # An absolute time index only encodes "when": it cannot extrapolate to future
-            # periods and lets the model memorise period effects. Derive parts upstream
-            # (DatetimeFeatures) or set drop_time_col=False to keep it deliberately.
-            self.dropped_cols_.append(time_col)
+        self.dropped_cols_ = []
+        self.drop_reasons_ = {}
+        self.semantic_types_ = {}
+        forced = dict(self.dtypes or {})
 
-        # Detect prospective ID columns by name or uniqueness
-        for c in X.columns:
-            looks_like_id = str(c).lower() == "id" or (
-                (X[c].dtype == object or pd.api.types.is_string_dtype(X[c]))
-                and X[c].nunique() == len(X)
-                and "id" in str(c).lower()
-            )
-            if self.drop_id and c not in self.dropped_cols_ and looks_like_id:
-                self.dropped_cols_.append(c)
+        for c in self.drop_cols or []:
+            if c in X.columns:
+                self._drop(c, "drop_cols")
+        profile = profile_dataframe(X, options=self.profile_options)
+        if cfg is not None:
+            for flag, col, reason in (
+                (self.drop_id, cfg.id_col, "id_col"),
+                # group keys are split keys, not features: keeping them leaks identity across folds
+                (self.drop_group_col, cfg.group_col, "group_col"),
+            ):
+                if flag and col and col in X.columns:
+                    self._drop(col, reason)
+            tc = cfg.time_col
+            # A numeric time index only encodes "when" and cannot extrapolate to the future:
+            # drop it. A real date is kept so DatetimeFeatures can derive calendar parts
+            # (month, weekday, ...) and then drop the raw timestamp.
+            if (
+                self.drop_time_col
+                and tc
+                and tc in X.columns
+                and profile.columns[str(tc)].semantic_type != "datetime"
+            ):
+                self._drop(tc, "time_col")
+        if self.drop_duplicate_columns:
+            for group in profile.duplicate_columns:
+                for c in group[1:]:
+                    if c not in forced:
+                        self._drop(
+                            next(k for k in X.columns if str(k) == c), f"duplicate of '{group[0]}'"
+                        )
 
         for col in X.columns:
+            p = profile.columns[str(col)]
+            self.semantic_types_[str(col)] = p.semantic_type
             if col in self.dropped_cols_:
                 continue
-            if self.dtypes and col in self.dtypes:
-                self.inferred_dtypes_[col] = self.dtypes[col]
-            elif pd.api.types.is_numeric_dtype(X[col]):
-                self.inferred_dtypes_[col] = "float64"
-            elif pd.api.types.is_datetime64_any_dtype(X[col]):
+            if col in forced:
+                self.inferred_dtypes_[col] = forced[col]
+                continue
+            kind = p.semantic_type
+            if kind == "identifier" and self.drop_id:
+                self._drop(col, "identifier")
+            elif kind == "empty":
+                self._drop(col, "empty")
+            elif kind == "constant" and self.drop_constant:
+                self._drop(col, "constant")
+            elif p.coercion == "numeric" or (
+                kind in ("numeric", "binary") and pd.api.types.is_numeric_dtype(X[col])
+            ):
+                self.inferred_dtypes_[col] = (
+                    "numeric_text" if p.coercion == "numeric" else "float64"
+                )
+            elif kind == "boolean":
+                self.inferred_dtypes_[col] = "boolean"
+            elif kind == "datetime":
                 self.inferred_dtypes_[col] = "datetime64[ns]"
+            elif kind == "text":
+                self.inferred_dtypes_[col] = "text"
+            elif pd.api.types.is_numeric_dtype(X[col]):
+                self.inferred_dtypes_[col] = "float64"  # e.g. kept identifiers / constants
             else:
                 self.inferred_dtypes_[col] = "category"
 
@@ -87,22 +143,47 @@ class TypeCaster(BaseStep):
             "type_caster",
             "ok",
             f"Configured dtypes for {len(self.inferred_dtypes_)} columns, dropped ID cols: {self.dropped_cols_}",
+            {"drop_reasons": self.drop_reasons_, "semantic_types": self.semantic_types_},
         )
         return self
 
     def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
         out = X.drop(columns=[c for c in self.dropped_cols_ if c in X.columns], errors="ignore")
-        for col, target_dtype in self.inferred_dtypes_.items():
-            if col in out.columns:
+        # fast path: columns that already have a numeric dtype are cast as one block
+        block = [
+            c
+            for c, t in self.inferred_dtypes_.items()
+            if t == "float64" and c in out.columns and pd.api.types.is_numeric_dtype(out[c])
+        ]
+        if block:
+            out[block] = out[block].astype(float).replace([np.inf, -np.inf], np.nan)
+        done = set(block)
+        for col, target in self.inferred_dtypes_.items():
+            if col not in out.columns or col in done:
+                continue
+            s = normalize_missing(out[col])
+            if target == "numeric_text":
+                out[col] = coerce_numeric(s).replace([np.inf, -np.inf], np.nan)
+            elif target == "float64":
+                out[col] = (
+                    pd.to_numeric(s, errors="coerce")
+                    .astype(float)
+                    .replace([np.inf, -np.inf], np.nan)
+                )
+            elif target == "boolean":
+                out[col] = s.astype(float) if pd.api.types.is_bool_dtype(s) else coerce_boolean(s)
+            elif target == "datetime64[ns]":
+                out[col] = coerce_datetime(s)
+            elif target == "text":
+                out[col] = s.where(s.isna(), s.astype(str)).astype(object)
+            elif target == "category":
+                # keep missing values as NaN (not the string "nan") for the imputer
+                out[col] = s.where(s.isna(), s.astype(str)).astype("category")
+            else:
                 try:
-                    if target_dtype == "category":
-                        # keep missing values as NaN (not the string "nan") for the imputer
-                        col_s = out[col]
-                        out[col] = col_s.where(col_s.isna(), col_s.astype(str)).astype("category")
-                    else:
-                        out[col] = out[col].astype(target_dtype)
-                except Exception:
-                    pass
+                    out[col] = s.astype(target)  # type: ignore[call-overload]  # user-forced dtype
+                except (TypeError, ValueError):
+                    out[col] = s
         return out
 
 
@@ -116,12 +197,17 @@ class MissingImputer(BaseStep):
         self,
         numeric_strategy: Literal["median", "mean", "zero"] = "median",
         categorical_strategy: Literal["mode", "missing_value"] = "mode",
-        add_indicator: bool = False,
+        add_indicator: bool | str = False,
+        indicator_min_rate: float = 0.01,
     ) -> None:
+        """``add_indicator``: True (every column with missing values), False, or "auto"
+        (only columns whose training missing rate is >= ``indicator_min_rate``; keeps the
+        often-informative "was missing" signal without flooding the data with flags)."""
         super().__init__()
         self.numeric_strategy = numeric_strategy
         self.categorical_strategy = categorical_strategy
         self.add_indicator = add_indicator
+        self.indicator_min_rate = indicator_min_rate
 
         self.fill_values_: dict[str, Any] = {}
         self.numeric_cols_: list[str] = []
@@ -134,9 +220,15 @@ class MissingImputer(BaseStep):
         self.numeric_cols_ = list(X.select_dtypes(include=[np.number]).columns)
         self.categorical_cols_ = [c for c in X.columns if c not in self.numeric_cols_]
 
+        def wants_indicator(col: Any) -> bool:
+            rate = float(X[col].isna().mean())
+            if self.add_indicator == "auto":
+                return rate >= self.indicator_min_rate
+            return bool(self.add_indicator) and rate > 0
+
         for col in self.numeric_cols_:
             s = X[col].dropna()
-            if self.add_indicator and X[col].isna().any():
+            if wants_indicator(col):
                 self.indicator_cols_.append(col)
 
             if s.empty:
@@ -150,7 +242,7 @@ class MissingImputer(BaseStep):
 
         for col in self.categorical_cols_:
             s = X[col].dropna()
-            if self.add_indicator and X[col].isna().any():
+            if wants_indicator(col):
                 self.indicator_cols_.append(col)
 
             if s.empty:
@@ -170,7 +262,7 @@ class MissingImputer(BaseStep):
 
     def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
         out = X.copy()
-        if self.add_indicator:
+        if self.indicator_cols_:
             for col in self.indicator_cols_:
                 if col in out.columns:
                     out[f"{col}_is_missing"] = out[col].isna().astype(int)
@@ -189,10 +281,24 @@ class MissingImputer(BaseStep):
 class RareCategoryGrouper(BaseStep):
     """Group rare categories (frequency < min_freq) into '__rare__'."""
 
-    def __init__(self, min_freq: float = 0.01, rare_label: str = "__rare__") -> None:
+    def __init__(
+        self,
+        min_freq: float | None = 0.01,
+        rare_label: str = "__rare__",
+        min_count: int | None = None,
+        max_cardinality: int | None = None,
+    ) -> None:
+        """A category is rare if its share < ``min_freq`` or its count < ``min_count``.
+
+        Columns with more than ``max_cardinality`` distinct values are left untouched: for
+        high-cardinality columns a relative threshold can erase *every* level (e.g. 400 cities
+        each holding 0.25% of rows) - smoothing target/frequency encoders handle rarity there.
+        """
         super().__init__()
         self.min_freq = min_freq
         self.rare_label = rare_label
+        self.min_count = min_count
+        self.max_cardinality = max_cardinality
         self.frequent_categories_: dict[str, set[str]] = {}
 
     def _fit(
@@ -203,9 +309,15 @@ class RareCategoryGrouper(BaseStep):
 
         for col in cat_cols:
             s = X[col].dropna().astype(str)
-            freqs = s.value_counts(normalize=True)
-            frequent = set(freqs[freqs >= self.min_freq].index)
-            self.frequent_categories_[col] = frequent
+            counts = s.value_counts()
+            if self.max_cardinality is not None and len(counts) > self.max_cardinality:
+                continue
+            keep = pd.Series(True, index=counts.index)
+            if self.min_freq is not None:
+                keep &= counts / max(len(s), 1) >= self.min_freq
+            if self.min_count is not None:
+                keep &= counts >= self.min_count
+            self.frequent_categories_[col] = set(counts.index[keep])
 
         self.report_.add(
             "rare_grouper",
@@ -219,7 +331,8 @@ class RareCategoryGrouper(BaseStep):
         for col, frequent in self.frequent_categories_.items():
             if col in out.columns:
                 values = out[col].astype(str)
-                out[col] = values.where(values.isin(list(frequent)), self.rare_label)
+                grouped = values.where(values.isin(list(frequent)), self.rare_label)
+                out[col] = grouped.where(out[col].notna(), np.nan)  # keep missing as missing
         return out
 
 
@@ -228,13 +341,16 @@ class CategoricalEncoder(BaseStep):
     """
     Adaptive categorical encoding:
     - Low cardinality (<= ``low_card_threshold``): One-Hot
-    - Mid cardinality (<= ``high_card_threshold``): Ordinal
+    - Mid cardinality (<= ``high_card_threshold``): ``mid_card_strategy`` (default "target")
     - High cardinality: smoothed Target Encoding. During ``fit_transform`` the training
       rows receive **out-of-fold** encodings (K-fold), so a row never sees its own target.
       ``transform`` on new data uses the mapping fitted on the full training set.
+    - Without a usable target (no ``y``, multiclass): frequency encoding (share of rows).
+      Ordinal codes are only used when requested, because the arbitrary order they impose
+      is meaningless for nominal categories.
 
-    Target encoding is only used for regression and binary targets (ADR-004). For
-    multiclass targets, high-cardinality columns fall back to ordinal encoding.
+    ``strategies`` overrides the choice per column: {"grade": "ordinal", "city": "frequency"}.
+    Target encoding is only used for regression and binary targets (ADR-004).
     """
 
     def __init__(
@@ -244,6 +360,8 @@ class CategoricalEncoder(BaseStep):
         cv: int = 5,
         smoothing: float = 10.0,
         random_state: int | None = 42,
+        mid_card_strategy: str = "target",
+        strategies: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.low_card_threshold = low_card_threshold
@@ -251,6 +369,9 @@ class CategoricalEncoder(BaseStep):
         self.cv = cv
         self.smoothing = smoothing
         self.random_state = random_state
+        self.mid_card_strategy = mid_card_strategy
+        self.strategies = strategies
+        self.frequency_maps_: dict[str, dict[str, float]] = {}
 
         self.encoding_plan_: dict[str, str] = {}
         self.onehot_categories_: dict[str, list[str]] = {}
@@ -295,6 +416,14 @@ class CategoricalEncoder(BaseStep):
         self.onehot_categories_ = {}
         self.ordinal_maps_ = {}
         self.target_maps_ = {}
+        self.frequency_maps_ = {}
+        valid = {"onehot", "ordinal", "target", "frequency"}
+        overrides = dict(self.strategies or {})
+        bad = {k: v for k, v in overrides.items() if v not in valid}
+        if bad or self.mid_card_strategy not in valid - {"onehot"}:
+            raise ValueError(
+                f"Unknown encoding strategy {bad or self.mid_card_strategy}; use {sorted(valid)}"
+            )
 
         y_num = self._target_to_numeric(y) if y is not None else None
         if cfg is not None and cfg.task_type == "regression" and y is not None:
@@ -310,16 +439,29 @@ class CategoricalEncoder(BaseStep):
 
         for col in cat_cols:
             n_unique = X[col].nunique(dropna=False)
-            if n_unique <= self.low_card_threshold:
+            if col in overrides:
+                strategy = overrides[col]
+            elif n_unique <= self.low_card_threshold:
                 strategy = "onehot"
-                self.onehot_categories_[col] = [str(v) for v in X[col].dropna().unique()]
-            elif n_unique <= self.high_card_threshold or y_num is None:
-                strategy = "ordinal"
-                cats = [str(v) for v in X[col].dropna().unique()]
-                self.ordinal_maps_[col] = {val: idx for idx, val in enumerate(cats)}
+            elif n_unique <= self.high_card_threshold:
+                strategy = self.mid_card_strategy
             else:
                 strategy = "target"
-                keys = X[col].astype(str)
+            if strategy == "target" and y_num is None:
+                strategy = "frequency"
+
+            keys = X[col].astype(str)
+            if strategy == "onehot":
+                self.onehot_categories_[col] = [str(v) for v in X[col].dropna().unique()]
+            elif strategy == "ordinal":
+                cats = sorted(str(v) for v in X[col].dropna().unique())
+                self.ordinal_maps_[col] = {val: idx for idx, val in enumerate(cats)}
+            elif strategy == "frequency":
+                self.frequency_maps_[col] = {
+                    str(k): float(v) for k, v in keys.value_counts(normalize=True).items()
+                }
+            else:
+                assert y_num is not None  # target strategy falls back to frequency without a target
                 self.target_maps_[col] = self._smoothed_map(keys, y_num, self.global_target_mean_)
             self.encoding_plan_[col] = strategy
 
@@ -374,6 +516,15 @@ class CategoricalEncoder(BaseStep):
             elif strategy == "ordinal":
                 col_map = self.ordinal_maps_.get(col, {})
                 out[col] = out[col].astype(str).map(col_map).fillna(-1).astype(int)
+
+            elif strategy == "frequency":
+                out[col] = (
+                    out[col]
+                    .astype(str)
+                    .map(self.frequency_maps_.get(col, {}))
+                    .astype(float)
+                    .fillna(0.0)
+                )
 
             elif strategy == "target":
                 te_map = self.target_maps_.get(col, {})

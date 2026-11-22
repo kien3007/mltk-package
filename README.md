@@ -52,7 +52,66 @@ src/mlkit/
 
 ---
 
-## 3. Chạy qua dòng lệnh (CLI)
+## 3. Hiểu dữ liệu trước khi mô hình hóa: profile, QC, EDA (ADR-007)
+
+Mọi bước (QC, EDA, biểu đồ, tiền xử lý) đọc chung một **profile** gán cho mỗi cột một *kiểu ngữ nghĩa*:
+`numeric`, `categorical`, `high_cardinality`, `boolean`, `binary`, `datetime`, `text`, `identifier`, `constant`, `empty`.
+Profile tự nhận ra:
+- số lưu dạng chuỗi (`"$1,234.50"`, `"12%"`, `"3,25"`);
+- `Yes`/`No` và ngày lưu dạng chuỗi;
+- giá trị thiếu đội lốt (`"n/a"`, `"null"`, `"-"`) và `inf`;
+- cột trùng lặp và cột ID (theo tên lẫn theo độ duy nhất).
+
+```bash
+# Báo cáo HTML độc lập: tổng quan, chất lượng dữ liệu, phân phối, phân tích target, giá trị thiếu, liên hệ giữa các cột
+mlkit eda data.csv --target churn --out eda.html --profile-json profile.json
+```
+
+```python
+from mlkit.qc_eda import run_eda, profile_dataframe, run_qc
+
+report = run_eda(df, target="churn")       # target nhị phân / nhiều lớp / hồi quy / không có target
+print(report.summary())
+report.target_association                    # mức liên hệ [0,1]: |Spearman| / η / Cramér's V tùy cặp kiểu
+report.target_by_feature["city"]             # tỉ lệ target theo category (top N + other)
+report.to_html("eda.html")
+
+qc = run_qc(df.drop(columns="churn"), y=df["churn"], enforce_gate=False)
+qc.issues_frame_                             # cột, kiểm tra, mức độ, chi tiết, gợi ý xử lý
+```
+
+**Các kiểm tra QC:**
+- kích thước dữ liệu, tên cột, dòng trùng, cột trùng;
+- giá trị thiếu, cột rỗng, giá trị thiếu đội lốt;
+- cột hằng và gần như hằng, cột ID, văn bản tự do;
+- cardinality cao, kiểu lưu dạng chuỗi, kiểu trộn lẫn, `inf`, ngoại lai;
+- target: rỗng, hằng, thiếu, lớp quá hiếm so với số fold, mất cân bằng, hồi quy lệch;
+- **rò rỉ cho mọi cặp kiểu cột và target**;
+- điểm chất lượng dữ liệu (0–100).
+
+**Tiền xử lý mặc định dựa trên profile:**
+
+| Bước | Hành vi |
+|---|---|
+| `type_caster` | Chuyển đổi các kiểu trên; loại cột ID, rỗng, hằng, trùng lặp, `id_col`, `group_col`, và `time_col` dạng số (lý do loại lưu ở `drop_reasons_`). |
+| `datetime` | Tách ngày thành các phần lịch. |
+| `text` | Thay văn bản tự do bằng các thống kê: độ dài, số từ, tỉ lệ chữ số, chữ hoa, dấu câu. |
+| `imputer` | Tạo cờ thiếu tự động; category thiếu trở thành một giá trị riêng. |
+| `rare_grouper` | Chỉ gộp mức hiếm (< 10 dòng) ở cột ít giá trị. |
+| `encoder` | One-hot cho cột ≤ 10 giá trị; target encoding OOF cho cột nhiều hơn; frequency khi không có target; ordinal chỉ khi chỉ định. |
+
+### Benchmark tính tổng quát
+
+```bash
+mlkit benchmark                 # 16 dataset, mỗi dataset một kỳ vọng (thoát mã 1 nếu có ca trượt)
+uv run pytest -m benchmark      # cùng bộ ca, dạng test (CI chạy ở job riêng)
+```
+
+Bộ ca gồm: sklearn (breast cancer, diabetes, wine), mất cân bằng 1%, 400 category, kiểu dữ liệu bẩn, văn bản tự do,
+thiếu dữ liệu có ý nghĩa, hiệu ứng theo thứ trong tuần, dữ liệu theo nhóm, dữ liệu rộng (500 cột), hồi quy lệch,
+tên cột là số, toàn category, rất nhỏ (80 dòng), và một feature rò rỉ (QC phải chặn).
+
+## 3b. Chạy qua dòng lệnh (CLI)
 
 ```bash
 # Huấn luyện + đánh giá holdout + lưu bundle + HTML report

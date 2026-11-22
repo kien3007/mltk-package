@@ -10,6 +10,7 @@ from mlkit.features.engineering import (
     RatioFeatures,
 )
 from mlkit.features.temporal import TemporalSpec, build_features, build_labels, build_panel
+from mlkit.features.text import TextFeatures
 
 __all__ = [
     "BinningFeatures",
@@ -18,6 +19,7 @@ __all__ = [
     "MultiTableAggregator",
     "RatioFeatures",
     "TemporalSpec",
+    "TextFeatures",
     "build_features",
     "build_labels",
     "build_panel",

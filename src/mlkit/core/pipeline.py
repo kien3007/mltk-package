@@ -158,7 +158,12 @@ class Pipeline(BaseEstimator):
         )
         folds = []
         for tr, va in splits:
-            fold_steps = [(name, clone(step)) for name, step in self.steps[:-1]]
+            # steps flagged ``fold_passthrough`` (pure inspection, identity transform) are skipped
+            fold_steps = [
+                (name, clone(step))
+                for name, step in self.steps[:-1]
+                if not getattr(step, "fold_passthrough", False)
+            ]
             fold_routed = {
                 name: {k: self._take(v, tr, n) for k, v in params.items()}
                 for name, params in routed.items()
