@@ -61,9 +61,12 @@ include = ["src/mlkit", "tests", "examples/*.py", "examples/*.yaml", "ADRs", "RE
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-ra -q --import-mode=importlib"
+addopts = "-ra -q --import-mode=importlib -m 'not benchmark'"
 filterwarnings = ["ignore::DeprecationWarning", "ignore::PendingDeprecationWarning"]
-markers = ["slow: end-to-end tests on example datasets"]
+markers = [
+    "slow: end-to-end tests on example datasets",
+    "benchmark: multi-dataset generality suite (run with: pytest -m benchmark)",
+]
 testpaths = ["tests"]
 pythonpath = ["src"]
 python_files = ["test_*.py"]

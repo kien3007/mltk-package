@@ -65,6 +65,19 @@ jobs:
           uv run mlkit -q predict ./artifacts/housing examples/data/california_housing.csv --out ./artifacts/preds.csv
           uv run mlkit -q monitor ./artifacts/housing examples/data/california_housing.csv
 
+  benchmark:
+    # Generality guard-rail: default pipeline + EDA on 16 dataset shapes, each with an expectation.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+      - name: Generality benchmark
+        env:
+          MPLBACKEND: Agg
+        run: uv run pytest -m benchmark -v
+
   examples:
     runs-on: ubuntu-latest
     steps:

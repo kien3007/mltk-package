@@ -29,7 +29,7 @@ from mlkit.core.log import get_logger
 from mlkit.core.pipeline import Pipeline
 from mlkit.core.registry import get_step, list_steps
 from mlkit.core.report import Report
-from mlkit.features import DatetimeFeatures
+from mlkit.features import DatetimeFeatures, TextFeatures
 from mlkit.modelling import ModelArena, compute_bootstrap_ci, compute_metrics
 from mlkit.modelling.evaluation import AVAILABLE_METRICS, LOWER_IS_BETTER
 from mlkit.monitoring import DriftMonitor
@@ -90,17 +90,27 @@ def write_table(df: pd.DataFrame, path: str | Path) -> Path:
 def build_default_pipeline(cfg: TaskConfig) -> Pipeline:
     """Construct the end-to-end 6-stage pipeline.
 
-    Datetime extraction runs *before* type casting / encoding so that date strings
-    are turned into numeric parts instead of being one-hot/ordinal encoded.
+    Order matters: ``type_caster`` (profile-driven) first converts numbers/booleans/dates
+    stored as text, normalises disguised missing values and drops identifiers, so that
+    ``datetime`` can expand real dates and ``text`` can summarise free text before imputation
+    and encoding. Rare-level folding only touches low-cardinality columns; higher-cardinality
+    columns are target/frequency encoded with smoothing instead.
     """
     modelling = cfg.modelling or {}
+    encoder = CategoricalEncoder(random_state=cfg.seed)
     steps = [
         ("qc", QualityCheckStep(enforce_gate=cfg.quality_gate, **cfg.qc)),
-        ("datetime", DatetimeFeatures()),
         ("type_caster", TypeCaster(drop_id=True)),
-        ("imputer", MissingImputer(add_indicator=False)),
-        ("rare_grouper", RareCategoryGrouper(min_freq=0.01)),
-        ("encoder", CategoricalEncoder(random_state=cfg.seed)),
+        ("datetime", DatetimeFeatures()),
+        ("text", TextFeatures()),
+        ("imputer", MissingImputer(add_indicator="auto", categorical_strategy="missing_value")),
+        (
+            "rare_grouper",
+            RareCategoryGrouper(
+                min_freq=None, min_count=10, max_cardinality=encoder.low_card_threshold
+            ),
+        ),
+        ("encoder", encoder),
         ("scaler", FeatureScaler()),
         ("variance_filter", VarianceFilter(threshold=0.0)),
         ("corr_filter", CorrelationFilter(threshold=0.95)),
@@ -177,7 +187,13 @@ def prepare_target(y: pd.Series, cfg: TaskConfig) -> tuple[pd.Series, dict[str, 
             f"Target '{cfg.target}' contains {int(y.isna().sum())} missing values."
         )
     if pd.api.types.is_numeric_dtype(y):
-        info["classes"] = sorted(pd.unique(y).tolist())
+        classes = sorted(pd.unique(y).tolist())
+        info["classes"] = classes
+        if len(classes) > 2:
+            raise ValidationError(
+                f"Classification target has {len(classes)} classes; only binary classification is "
+                "supported (ADR-004). Use task_type: regression for ordinal/count targets."
+            )
         return y, info
 
     y_clean = y.astype(str).str.strip().str.rstrip(".")
