@@ -11,24 +11,28 @@ import pandas as pd
 rng = np.random.default_rng(123)
 N = 100
 
-primary_df = pd.DataFrame({
-    "account_id": [f"acc_{i}" for i in range(N)],
-    "age": rng.integers(18, 65, size=N),
-    "balance": rng.normal(10_000, 2_000, size=N),
-    "target": rng.choice([0, 1], size=N),
-})
+primary_df = pd.DataFrame(
+    {
+        "account_id": [f"acc_{i}" for i in range(N)],
+        "age": rng.integers(18, 65, size=N),
+        "balance": rng.normal(10_000, 2_000, size=N),
+        "target": rng.choice([0, 1], size=N),
+    }
+)
 
 # 1-to-many transactions table: 5 transactions per account
 trans_records = []
 for acc in primary_df["account_id"]:
     n_trans = rng.integers(1, 10)
     for _t in range(n_trans):
-        trans_records.append({
-            "account_id": acc,
-            "amount": float(rng.uniform(10, 500)),
-            "trans_type": rng.choice(["credit", "debit"]),
-            "date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=int(rng.integers(0, 180))),
-        })
+        trans_records.append(
+            {
+                "account_id": acc,
+                "amount": float(rng.uniform(10, 500)),
+                "trans_type": rng.choice(["credit", "debit"]),
+                "date": pd.Timestamp("2024-01-01") + pd.Timedelta(days=int(rng.integers(0, 180))),
+            }
+        )
 secondary_df = pd.DataFrame(trans_records)
 
 

@@ -66,7 +66,9 @@ class QualityCheckStep(BaseStep):
                 f"{dup_count} duplicate rows ({dup_pct * 100:.1f}%) detected.",
             )
         else:
-            self.report_.add("duplicates", "ok", f"Duplicate rows check passed ({dup_count} duplicates).")
+            self.report_.add(
+                "duplicates", "ok", f"Duplicate rows check passed ({dup_count} duplicates)."
+            )
 
         # 3. Missing rate check
         missing_s = X.isna().mean()
@@ -104,13 +106,17 @@ class QualityCheckStep(BaseStep):
                 f"{len(high_card_cols)} categorical columns have cardinality > {self.max_cardinality}: {high_card_cols}",
             )
         else:
-            self.report_.add("high_cardinality", "ok", "All categorical features have healthy cardinality.")
+            self.report_.add(
+                "high_cardinality", "ok", "All categorical features have healthy cardinality."
+            )
 
         # 6. Target Checks (if y provided)
         if y is not None:
             y_s = pd.Series(y).dropna()
             if y_s.empty:
-                self.report_.add("target_distribution", "error", "Target variable is completely empty or null.")
+                self.report_.add(
+                    "target_distribution", "error", "Target variable is completely empty or null."
+                )
             else:
                 n_unique_y = y_s.nunique()
                 if n_unique_y <= 1:
@@ -157,7 +163,11 @@ class QualityCheckStep(BaseStep):
         if self.report_.has_errors:
             score -= 25.0
         self.data_quality_score_ = float(max(0.0, min(100.0, round(score, 1))))
-        dqs_status: Severity = "ok" if self.data_quality_score_ >= 75 else ("warn" if self.data_quality_score_ >= 50 else "error")
+        dqs_status: Severity = (
+            "ok"
+            if self.data_quality_score_ >= 75
+            else ("warn" if self.data_quality_score_ >= 50 else "error")
+        )
         self.report_.add(
             "data_quality_score",
             dqs_status,

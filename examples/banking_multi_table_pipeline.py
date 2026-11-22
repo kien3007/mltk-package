@@ -103,7 +103,9 @@ def main():
     tx_agg.fit(users_enriched)
     full_dataset = tx_agg.transform(users_enriched)
 
-    print(f"✅ Enriched primary table from {len(users_df.columns)} to {len(full_dataset.columns)} features!")
+    print(
+        f"✅ Enriched primary table from {len(users_df.columns)} to {len(full_dataset.columns)} features!"
+    )
 
     # Define Target: Predict credit_score
     target_col = "credit_score"
@@ -128,15 +130,17 @@ def main():
 
     # Steps 2-5: Pipeline Training
     print("\n--- [Steps 2-5] Fitting MLKit Pipeline with Model Zoo Benchmark ---")
-    pipeline = Pipeline([
-        ("type_caster", TypeCaster(drop_id=False)),
-        ("imputer", MissingImputer(add_indicator=False)),
-        ("encoder", CategoricalEncoder()),
-        ("scaler", FeatureScaler()),
-        ("var_filter", VarianceFilter(threshold=0.0)),
-        ("corr_filter", CorrelationFilter(threshold=0.98)),
-        ("arena", ModelArena(cv=3, random_state=42)),
-    ])
+    pipeline = Pipeline(
+        [
+            ("type_caster", TypeCaster(drop_id=False)),
+            ("imputer", MissingImputer(add_indicator=False)),
+            ("encoder", CategoricalEncoder()),
+            ("scaler", FeatureScaler()),
+            ("var_filter", VarianceFilter(threshold=0.0)),
+            ("corr_filter", CorrelationFilter(threshold=0.98)),
+            ("arena", ModelArena(cv=3, random_state=42)),
+        ]
+    )
 
     pipeline.fit(X_train, y_train, cfg=cfg)
     arena_step = pipeline.named_steps["arena"]
@@ -145,6 +149,7 @@ def main():
 
     y_pred = pipeline.predict(X_test)
     from sklearn.metrics import mean_squared_error, r2_score
+
     test_rmse = (mean_squared_error(y_test, y_pred)) ** 0.5
     test_r2 = r2_score(y_test, y_pred)
     print(f"\n📊 Test Set Evaluation: RMSE = {test_rmse:.2f}, R² = {test_r2:.4f}")

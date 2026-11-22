@@ -35,7 +35,12 @@ class TestTargetEncodingLeakage:
         X = _high_card_frame()
         y = pd.Series(rng.integers(0, 2, len(X)))
         arena = ModelArena(cv=3, enforce_baseline_gate=False, candidates=["linear"])
-        pipe = Pipeline([("enc", CategoricalEncoder(low_card_threshold=5, high_card_threshold=20)), ("arena", arena)])
+        pipe = Pipeline(
+            [
+                ("enc", CategoricalEncoder(low_card_threshold=5, high_card_threshold=20)),
+                ("arena", arena),
+            ]
+        )
         pipe.fit(X, y, cfg=TaskConfig(task_type="classification", target="y"))
 
         assert pipe.named_steps["enc"].encoding_plan_["hc"] == "target"
@@ -112,12 +117,17 @@ class TestPreprocessingRobustness:
         df = pd.DataFrame({"day": [1, 2, 3], "x": [1.0, 2.0, 3.0]})
         cfg = TaskConfig(target="y", time_col="day")
         assert list(TypeCaster().fit_transform(df, cfg=cfg).columns) == ["x"]
-        assert list(TypeCaster(drop_time_col=False).fit_transform(df, cfg=cfg).columns) == ["day", "x"]
+        assert list(TypeCaster(drop_time_col=False).fit_transform(df, cfg=cfg).columns) == [
+            "day",
+            "x",
+        ]
 
     def test_datetime_detected_on_category_dtype_and_time_col(self):
         from mlkit.features import DatetimeFeatures
 
-        df = pd.DataFrame({"ts": pd.Series(["2024-01-01", "2024-06-15", "2024-12-31"], dtype="category")})
+        df = pd.DataFrame(
+            {"ts": pd.Series(["2024-01-01", "2024-06-15", "2024-12-31"], dtype="category")}
+        )
         out = DatetimeFeatures().fit_transform(df, cfg=TaskConfig(target="y", time_col="ts"))
         assert "ts_month" in out.columns and "ts" not in out.columns
 
@@ -151,7 +161,9 @@ class TestPipelineAndConfig:
 
         n = 6000
         X = pd.DataFrame({"x": rng.normal(size=n)})
-        y = (rng.uniform(size=n) < 1 / (1 + np.exp(-(1.2 * X["x"] + 1.0)))).astype(int)  # ~70% positive
+        y = (rng.uniform(size=n) < 1 / (1 + np.exp(-(1.2 * X["x"] + 1.0)))).astype(
+            int
+        )  # ~70% positive
         tr, te = slice(0, 4500), slice(4500, n)
         gap = {}
         for flag in (True, False):
@@ -200,7 +212,9 @@ class TestDriftBaseline:
     def _monitor(self):
         from mlkit.monitoring import DriftMonitor
 
-        base = pd.DataFrame({"num": rng.normal(size=2000), "cat": rng.choice(["A", "B", "C"], 2000)})
+        base = pd.DataFrame(
+            {"num": rng.normal(size=2000), "cat": rng.choice(["A", "B", "C"], 2000)}
+        )
         mon = DriftMonitor().fit(base)
         mon.fit_predictions(rng.uniform(size=2000))
         return mon, base
@@ -218,7 +232,9 @@ class TestDriftBaseline:
         from mlkit.monitoring import DriftMonitor
 
         mon, _ = self._monitor()
-        fresh = pd.DataFrame({"num": rng.normal(size=1000), "cat": rng.choice(["A", "B", "C"], 1000)})
+        fresh = pd.DataFrame(
+            {"num": rng.normal(size=1000), "cat": rng.choice(["A", "B", "C"], 1000)}
+        )
         report = DriftMonitor.from_dict(mon.to_dict()).monitor(fresh, y_pred=rng.uniform(size=1000))
         assert report.is_passed
 
@@ -253,7 +269,9 @@ class TestBundleIntegrity:
         pipe = Pipeline([("m", DummyTrainer(task_type="regression"))])
         X = pd.DataFrame({"x": [1.0, 2.0, 3.0]})
         pipe.fit(X, [1.0, 2.0, 3.0])
-        out = save_bundle(pipe, tmp_path / "b", cfg=TaskConfig(task_type="regression", target="y"), X_sample=X)
+        out = save_bundle(
+            pipe, tmp_path / "b", cfg=TaskConfig(task_type="regression", target="y"), X_sample=X
+        )
 
         manifest = json.loads((out / "manifest.json").read_text())
         assert set(manifest["files"]) >= {"pipeline.joblib", "config.yaml", "versions.json"}
@@ -332,7 +350,9 @@ class TestRunner:
         assert pipe.named_steps["arena"].cv == cfg.cv_folds
 
         with pytest.raises(ValidationError, match="last step"):
-            build_pipeline_from_config(TaskConfig(target="y", steps=[{"step": "preprocessing.imputer"}]))
+            build_pipeline_from_config(
+                TaskConfig(target="y", steps=[{"step": "preprocessing.imputer"}])
+            )
         with pytest.raises(ValidationError, match="Duplicate"):
             build_pipeline_from_config(
                 TaskConfig(target="y", steps=[{"name": "a", "step": "preprocessing.imputer"}] * 2)
@@ -386,7 +406,13 @@ modelling: {{candidates: [linear, lightgbm]}}
 class TestCLIEndToEnd:
     def test_bundle_contents(self, trained_bundle):
         d, bundle, _ = trained_bundle
-        for f in ("pipeline.joblib", "baseline.json", "metrics.json", "report.json", "manifest.json"):
+        for f in (
+            "pipeline.joblib",
+            "baseline.json",
+            "metrics.json",
+            "report.json",
+            "manifest.json",
+        ):
             assert (bundle / f).exists(), f
         metrics = json.loads((bundle / "metrics.json").read_text())
         assert metrics["split"] == "time"
@@ -475,7 +501,9 @@ class TestProbabilityMetrics:
         assert expected_calibration_error(y, np.full(1000, 0.9)) == pytest.approx(0.4)
         assert expected_calibration_error(np.array([]), np.array([])) == 0.0
         # probabilities exactly 0 / 1 / out of range must not index outside the bins
-        assert expected_calibration_error(np.array([0, 1]), np.array([0.0, 1.0])) == pytest.approx(0.0)
+        assert expected_calibration_error(np.array([0, 1]), np.array([0.0, 1.0])) == pytest.approx(
+            0.0
+        )
         assert 0.0 <= expected_calibration_error(np.array([0, 1]), np.array([-0.2, 1.3])) <= 1.0
 
     def test_well_calibrated_scores_have_low_ece(self):
@@ -509,7 +537,9 @@ class TestProbabilityMetrics:
 
         assert {"brier", "ece", "rmse", "mae"} <= LOWER_IS_BETTER
         assert "roc_auc" not in LOWER_IS_BETTER and "r2" not in LOWER_IS_BETTER
-        assert AVAILABLE_METRICS["classification"] | AVAILABLE_METRICS["regression"] >= LOWER_IS_BETTER
+        assert (
+            AVAILABLE_METRICS["classification"] | AVAILABLE_METRICS["regression"] >= LOWER_IS_BETTER
+        )
 
 
 def _threshold_cfg(thresholds: dict[str, float]) -> TaskConfig:
@@ -536,8 +566,13 @@ class TestMetricThresholdGate:
         df = _binary_frame()
         with pytest.raises(ValidationError, match=r"Unknown metric.*\['roc_auc_typo'\]"):
             train(_threshold_cfg({"roc_auc_typo": 0.9}), df)
-        with pytest.raises(ValidationError, match="Unknown metric"):  # classification metric on regression
-            train(TaskConfig(task_type="regression", target="x1", metric_thresholds={"roc_auc": 0.7}), df)
+        with pytest.raises(
+            ValidationError, match="Unknown metric"
+        ):  # classification metric on regression
+            train(
+                TaskConfig(task_type="regression", target="x1", metric_thresholds={"roc_auc": 0.7}),
+                df,
+            )
 
     def test_directions_and_failure_messages(self):
         from mlkit.runner import train
@@ -643,7 +678,10 @@ def test_optuna_refit_uses_full_param_dict_including_constants():
     search.fit(X, y, cfg=TaskConfig(target="y"))
     assert search.best_params_["subsample_freq"] == 1
     assert search.best_estimator_.kwargs["subsample_freq"] == 1
-    assert search.best_estimator_._estimator.get_params()["min_child_samples"] == search.best_params_["min_child_samples"]
+    assert (
+        search.best_estimator_._estimator.get_params()["min_child_samples"]
+        == search.best_params_["min_child_samples"]
+    )
 
 
 def test_drift_monitor_exclude_survives_serialisation():

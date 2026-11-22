@@ -44,7 +44,9 @@ class BaseTrainer(BaseEstimator):
         super().set_params(**{k: v for k, v in params.items() if k in explicit})
         if extra:
             if not hasattr(self, "kwargs"):
-                raise ValueError(f"{type(self).__name__} does not accept extra parameters: {sorted(extra)}")
+                raise ValueError(
+                    f"{type(self).__name__} does not accept extra parameters: {sorted(extra)}"
+                )
             self.kwargs = {**self.kwargs, **extra}
         return self
 
@@ -76,7 +78,9 @@ class BaseTrainer(BaseEstimator):
         if self.task_type == "regression":
             raise AttributeError("predict_proba is only available for classification.")
         if not hasattr(self._estimator, "predict_proba"):
-            raise AttributeError(f"{type(self._estimator).__name__} does not support predict_proba.")
+            raise AttributeError(
+                f"{type(self._estimator).__name__} does not support predict_proba."
+            )
         return self._estimator.predict_proba(X)
 
     @property

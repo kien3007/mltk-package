@@ -123,7 +123,7 @@ def main():
     y = df[target]
 
     print(f"  • Total samples: {len(df):,} transactions")
-    print(f"  • Declined transactions: {y.sum():,} ({y.mean()*100:.2f}%)")
+    print(f"  • Declined transactions: {y.sum():,} ({y.mean() * 100:.2f}%)")
 
     # 2. Stage 1: Data Quality & Exploratory Profiling
     print("\n🔍 [2/6] Generating Data Quality & Exploratory Profiling Charts...")
@@ -142,7 +142,9 @@ def main():
     fig_corr.savefig(fig_dir / "03_correlation_heatmap.png")
     print("  ✅ [03/15] Correlation Heatmap")
 
-    fig_density = plot_feature_distribution_by_target(df, feature_col="amount", target_col="is_declined")
+    fig_density = plot_feature_distribution_by_target(
+        df, feature_col="amount", target_col="is_declined"
+    )
     fig_density.savefig(fig_dir / "04_amount_distribution_by_target.png")
     print("  ✅ [04/15] Feature Density by Target (KDE Overlay)")
 
@@ -153,14 +155,16 @@ def main():
     )
 
     cfg = TaskConfig(task_type="classification", target=target, cv_folds=3, baseline_gate=False)
-    pipeline = Pipeline([
-        ("caster", TypeCaster(drop_id=False)),
-        ("imputer", MissingImputer(add_indicator=False)),
-        ("encoder", CategoricalEncoder()),
-        ("scaler", FeatureScaler()),
-        ("var_filter", VarianceFilter(threshold=0.0)),
-        ("arena", ModelArena(cv=3, enforce_baseline_gate=False, random_state=42)),
-    ])
+    pipeline = Pipeline(
+        [
+            ("caster", TypeCaster(drop_id=False)),
+            ("imputer", MissingImputer(add_indicator=False)),
+            ("encoder", CategoricalEncoder()),
+            ("scaler", FeatureScaler()),
+            ("var_filter", VarianceFilter(threshold=0.0)),
+            ("arena", ModelArena(cv=3, enforce_baseline_gate=False, random_state=42)),
+        ]
+    )
     pipeline.fit(X_train, y_train, cfg=cfg)
     arena_step = pipeline.named_steps["arena"]
 
@@ -171,7 +175,9 @@ def main():
     # Learning curve on sample of processed data
     X_tr_proc = pipeline.transform(X_train.head(1500))
     y_tr_sub = y_train.head(1500)
-    fig_learn = plot_learning_curve(arena_step.best_estimator_._estimator, X_tr_proc, y_tr_sub, cv=3)
+    fig_learn = plot_learning_curve(
+        arena_step.best_estimator_._estimator, X_tr_proc, y_tr_sub, cv=3
+    )
     fig_learn.savefig(fig_dir / "06_learning_curve.png")
     print("  ✅ [06/15] Sample Efficiency Learning Curve")
 
@@ -233,7 +239,7 @@ def main():
             "Analyzed Dataset": f"{len(df):,} transactions",
             "Champion Algorithm": arena_step.best_model_name_,
             "Data Quality Score": f"{qc.data_quality_score_} / 100",
-            "Target Prevalence": f"{y.mean()*100:.2f}% positive",
+            "Target Prevalence": f"{y.mean() * 100:.2f}% positive",
         },
         figures=[
             ("1. Missing Rate per Column", fig_missing),

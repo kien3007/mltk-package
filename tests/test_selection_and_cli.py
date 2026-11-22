@@ -15,12 +15,14 @@ from mlkit.core.errors import QualityGateError
 rng = np.random.default_rng(42)
 N = 100
 
-df_sample = pd.DataFrame({
-    "num1": rng.normal(0, 1, size=N),
-    "num2": rng.normal(5, 2, size=N),
-    "constant": np.zeros(N),  # 0 variance
-    "cat": rng.choice(["cat1", "cat2", "cat3"], size=N),
-})
+df_sample = pd.DataFrame(
+    {
+        "num1": rng.normal(0, 1, size=N),
+        "num2": rng.normal(5, 2, size=N),
+        "constant": np.zeros(N),  # 0 variance
+        "cat": rng.choice(["cat1", "cat2", "cat3"], size=N),
+    }
+)
 # Make num3 strictly collinear with num1
 df_sample["collinear"] = df_sample["num1"] * 2.0 + 0.0001 * rng.normal(0, 1, size=N)
 
@@ -106,21 +108,26 @@ class TestCLI:
         from mlkit.cli import cmd_monitor, cmd_run
 
         data_csv = tmp_path / "train_data.csv"
-        df = pd.DataFrame({
-            "age": rng.integers(20, 60, size=150),
-            "income": rng.normal(50000, 10000, size=150),
-            "label": rng.choice([0, 1], size=150),
-        })
+        df = pd.DataFrame(
+            {
+                "age": rng.integers(20, 60, size=150),
+                "income": rng.normal(50000, 10000, size=150),
+                "label": rng.choice([0, 1], size=150),
+            }
+        )
         df.to_csv(data_csv, index=False)
 
         cfg_file = tmp_path / "task.yaml"
-        cfg_file.write_text(f"""
+        cfg_file.write_text(
+            f"""
 task_type: classification
 target: label
 data_path: "{data_csv.as_posix()}"
 baseline_gate: false
 quality_gate: true
-""", encoding="utf-8")
+""",
+            encoding="utf-8",
+        )
 
         bundle_dir = tmp_path / "bundle_out"
         ret = cmd_run(str(cfg_file), output_dir=str(bundle_dir))
@@ -149,10 +156,12 @@ class TestEdgeCases:
     def test_all_null_column_handled_by_imputer(self):
         from mlkit.preprocessing import MissingImputer
 
-        df = pd.DataFrame({
-            "valid": [1.0, 2.0, 3.0, 4.0],
-            "all_null": [np.nan, np.nan, np.nan, np.nan],
-        })
+        df = pd.DataFrame(
+            {
+                "valid": [1.0, 2.0, 3.0, 4.0],
+                "all_null": [np.nan, np.nan, np.nan, np.nan],
+            }
+        )
         imputer = MissingImputer(add_indicator=False)
         imputer.fit(df)
         out = imputer.transform(df)

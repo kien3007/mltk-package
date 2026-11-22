@@ -7,7 +7,6 @@ Endpoints:
     POST /monitor   {"records": [...]} -> drift report for the posted batch
 """
 
-
 import contextlib
 from pathlib import Path
 from typing import Any
@@ -38,7 +37,9 @@ def create_app(bundle_path: str | Path) -> Any:
     class MonitorRequest(BaseModel):
         records: list[dict[str, Any]] = Field(..., min_length=1)
 
-    app = FastAPI(title="mlkit model server", version=str(metadata.get("versions", {}).get("mlkit", "")))
+    app = FastAPI(
+        title="mlkit model server", version=str(metadata.get("versions", {}).get("mlkit", ""))
+    )
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -73,7 +74,9 @@ def create_app(bundle_path: str | Path) -> Any:
         df = pd.DataFrame.from_records(req.records)
         y_pred = None
         with contextlib.suppress(ValidationError):
-            y_pred = model_output(pipeline, validate_input(df, metadata.get("schema", {})), cfg.task_type)
+            y_pred = model_output(
+                pipeline, validate_input(df, metadata.get("schema", {})), cfg.task_type
+            )
         return monitor.monitor(df, y_pred=y_pred).to_dict()
 
     return app

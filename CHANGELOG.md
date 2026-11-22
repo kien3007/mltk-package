@@ -14,6 +14,11 @@
 - Các step không còn tích lũy state hoặc report khi `fit` lại.
 - Chi-square cho drift category dùng kiểm định hai mẫu (homogeneity) và gộp các ô nhỏ, giảm báo động giả.
 - Version ghi trong bundle được lấy từ metadata của package, không còn viết cứng.
+- **Tham số `**kwargs` của trainer bị mất khi `clone()`.** CV và Optuna đánh giá một mô hình khác với mô hình được fit
+  cuối cùng: 5/9 tham số trong `LGBM_SPACE` và 2/5 trong `RF_SPACE` không hề có tác dụng khi tuning. Các trainer giờ
+  dùng chung `BaseTrainer`, trong đó `get_params`/`set_params` có bao gồm `kwargs`.
+- `OptunaSearch` refit mô hình thắng bằng *toàn bộ* dict tham số của trial (kể cả hằng số), không chỉ các giá trị được suggest.
+  `LGBM_SPACE` thêm `subsample_freq=1` để `subsample` thực sự có tác dụng.
 
 ### Tính năng mới
 - CLI: `mlkit predict`, `mlkit serve`, `mlkit steps`; `monitor --out/--fail-on`; `run --html-report`; các cờ `-v/-q/--log-json`; mã thoát `2` khi có drift.
@@ -24,6 +29,7 @@
 - Metric mới `brier` và `ece` (`expected_calibration_error`) trong `compute_metrics`, CV, khoảng tin cậy bootstrap và holdout.
 - `ModelArena(handle_imbalance=...)` / `modelling.handle_imbalance`: tắt class weight khi cần xác suất đã hiệu chuẩn.
 - `TypeCaster(drop_time_col=True)`: `time_col` không còn là đặc trưng thô.
+- `DriftMonitor(exclude=[...])` / `monitoring.exclude`: bỏ các đặc trưng tăng theo thời gian (tích lũy) khỏi giám sát.
 - `metrics.json` chứa kết quả CV của champion, metric holdout, khoảng tin cậy bootstrap và bảng Arena.
 - `ModelArena(candidates=[...])`, có hỗ trợ XGBoost (tùy chọn).
 - Drift: prediction drift, tỷ lệ category chưa từng thấy, kiểm tra cột bị thiếu; `DriftMonitor.to_dict()/from_dict()`.
@@ -37,6 +43,8 @@
 - Dependencies lõi được rút gọn. `xgboost`, `viz`, `explain`, `tuning`, `tracking`, `serve`, `io` chuyển thành extras. `pytest`, `ruff`, `mypy` chuyển sang nhóm `dev`.
 - CI có thêm các job lint + mypy, test kèm cổng coverage 80%, cài tối thiểu, chạy ví dụ, build wheel và chạy trên Windows.
 - Mypy không còn lỗi nào.
+- Version chỉ khai báo một nơi (`src/mlkit/__init__.py`, qua hatch). sdist chỉ gồm mã nguồn, test, ví dụ và tài liệu.
+- Áp dụng `ruff format` cho toàn repo; CI kiểm tra `ruff format --check`. `.gitattributes` cố định LF.
 
 ### Thay đổi không tương thích
 - `ModelArena(models=...)`: thuộc tính `custom_models` vẫn còn để tương thích ngược, nhưng chỉ là alias.

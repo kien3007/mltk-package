@@ -129,19 +129,26 @@ class CVEvaluator:
         if groups is not None:
             groups_arr = np.asarray(groups)
             n_groups = len(np.unique(groups_arr))
-            cv_splitter = GroupKFold(n_splits=min(self.cv, n_groups)).split(X, y_arr, groups=groups_arr)
+            cv_splitter = GroupKFold(n_splits=min(self.cv, n_groups)).split(
+                X, y_arr, groups=groups_arr
+            )
         elif time_index is not None or (cfg and cfg.time_col):
             if time_index is not None:
-                order = np.argsort(pd.to_datetime(pd.Series(np.asarray(time_index)), errors="coerce").to_numpy(), kind="stable")
+                order = np.argsort(
+                    pd.to_datetime(pd.Series(np.asarray(time_index)), errors="coerce").to_numpy(),
+                    kind="stable",
+                )
                 X = X.iloc[order]
                 y_arr = y_arr[order]
             cv_splitter = TimeSeriesSplit(n_splits=self.cv).split(X)
         elif self.task_type == "classification":
-            cv_splitter = StratifiedKFold(n_splits=self.cv, shuffle=True, random_state=self.random_state).split(
-                X, y_arr
-            )
+            cv_splitter = StratifiedKFold(
+                n_splits=self.cv, shuffle=True, random_state=self.random_state
+            ).split(X, y_arr)
         else:
-            cv_splitter = KFold(n_splits=self.cv, shuffle=True, random_state=self.random_state).split(X)
+            cv_splitter = KFold(
+                n_splits=self.cv, shuffle=True, random_state=self.random_state
+            ).split(X)
 
         fold_metrics = []
         for train_idx, val_idx in cv_splitter:
@@ -278,4 +285,3 @@ class CalibratedModelWrapper(BaseEstimator):
         if not self._is_fitted:
             raise NotFittedError("CalibratedModelWrapper is not fitted.")
         return self._calibrator.predict_proba(X)
-

@@ -28,11 +28,15 @@ class DatetimeFeatures(BaseStep):
         self.drop_original = drop_original
         self.detected_cols_: list[str] = []
 
-    def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> DatetimeFeatures:
+    def _fit(
+        self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None
+    ) -> DatetimeFeatures:
         if self.columns:
             self.detected_cols_ = [c for c in self.columns if c in X.columns]
         else:
-            self.detected_cols_ = list(X.select_dtypes(include=["datetime64", "datetimetz"]).columns)
+            self.detected_cols_ = list(
+                X.select_dtypes(include=["datetime64", "datetimetz"]).columns
+            )
             time_col = cfg.time_col if cfg else None
             # Check string/object/category candidates (by name hint or configured time_col)
             for c in X.select_dtypes(include=["object", "category", "string"]).columns:
@@ -128,7 +132,9 @@ class GroupAggFeatures(BaseStep):
         self.aggregations = aggregations or ["mean", "std"]
         self.lookup_tables_: dict[str, pd.DataFrame] = {}
 
-    def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> GroupAggFeatures:
+    def _fit(
+        self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None
+    ) -> GroupAggFeatures:
         self.lookup_tables_ = {}
         for g in self.group_cols:
             if g in X.columns:
@@ -136,7 +142,9 @@ class GroupAggFeatures(BaseStep):
                 if num_targets:
                     agg_df = X.groupby(g, observed=True)[num_targets].agg(self.aggregations)
                     # Flatten multi-index
-                    agg_df.columns = [f"{g}_{col}_{stat}" for col, stat in agg_df.columns.to_flat_index()]
+                    agg_df.columns = [
+                        f"{g}_{col}_{stat}" for col, stat in agg_df.columns.to_flat_index()
+                    ]
                     self.lookup_tables_[g] = agg_df
 
         self.report_.add(
@@ -164,7 +172,9 @@ class BinningFeatures(BaseStep):
         self.n_bins = n_bins
         self.bin_edges_: dict[str, np.ndarray] = {}
 
-    def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> BinningFeatures:
+    def _fit(
+        self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None
+    ) -> BinningFeatures:
         target_cols = self.columns or list(X.select_dtypes(include=[np.number]).columns)
         self.bin_edges_ = {}
         for c in target_cols:
@@ -188,7 +198,11 @@ class BinningFeatures(BaseStep):
         out = X.copy()
         for c, edges in self.bin_edges_.items():
             if c in out.columns and len(edges) > 1:
-                out[f"{c}_bin"] = pd.cut(out[c], bins=list(edges), labels=False, include_lowest=True).fillna(-1).astype(int)
+                out[f"{c}_bin"] = (
+                    pd.cut(out[c], bins=list(edges), labels=False, include_lowest=True)
+                    .fillna(-1)
+                    .astype(int)
+                )
         return out
 
 
@@ -221,7 +235,9 @@ class MultiTableAggregator(BaseStep):
         self.window_days = window_days
         self.agg_table_: pd.DataFrame = pd.DataFrame()
 
-    def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> MultiTableAggregator:
+    def _fit(
+        self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None
+    ) -> MultiTableAggregator:
         sec = self.secondary_df
         if self.join_key not in sec.columns:
             self.report_.add(
@@ -235,8 +251,14 @@ class MultiTableAggregator(BaseStep):
         if self.time_col:
             exclude_cols.add(self.time_col)
 
-        num_cols = [c for c in sec.select_dtypes(include=[np.number]).columns if c not in exclude_cols]
-        cat_cols = [c for c in sec.select_dtypes(include=["object", "category"]).columns if c not in exclude_cols]
+        num_cols = [
+            c for c in sec.select_dtypes(include=[np.number]).columns if c not in exclude_cols
+        ]
+        cat_cols = [
+            c
+            for c in sec.select_dtypes(include=["object", "category"]).columns
+            if c not in exclude_cols
+        ]
 
         agg_dict: dict[str, list[str]] = {}
         for c in num_cols:
@@ -245,7 +267,9 @@ class MultiTableAggregator(BaseStep):
             agg_dict[c] = self.categorical_aggs
 
         if not agg_dict:
-            self.report_.add("multi_table_agg", "warn", "No valid columns to aggregate in secondary table.")
+            self.report_.add(
+                "multi_table_agg", "warn", "No valid columns to aggregate in secondary table."
+            )
             return self
 
         grouped = sec.groupby(self.join_key, observed=True).agg(agg_dict)
@@ -260,8 +284,13 @@ class MultiTableAggregator(BaseStep):
                     mask = sec_time >= cutoff
                     sub = sec[mask]
                     if not sub.empty:
-                        w_grouped = sub.groupby(self.join_key, observed=True)[num_cols].agg(["sum", "mean", "count"])
-                        w_grouped.columns = [f"{self.prefix}{col}_{stat}_last_{w}d" for col, stat in w_grouped.columns]
+                        w_grouped = sub.groupby(self.join_key, observed=True)[num_cols].agg(
+                            ["sum", "mean", "count"]
+                        )
+                        w_grouped.columns = [
+                            f"{self.prefix}{col}_{stat}_last_{w}d"
+                            for col, stat in w_grouped.columns
+                        ]
                         grouped = grouped.join(w_grouped, how="left")
 
         self.agg_table_ = grouped.reset_index()
@@ -277,7 +306,9 @@ class MultiTableAggregator(BaseStep):
         if self.agg_table_.empty or self.join_key not in X.columns:
             return X
         out = X.merge(self.agg_table_, on=self.join_key, how="left")
-        fill_zero_cols = [c for c in out.columns if any(c.endswith(s) for s in ["_count", "_sum", "_nunique"])]
+        fill_zero_cols = [
+            c for c in out.columns if any(c.endswith(s) for s in ["_count", "_sum", "_nunique"])
+        ]
         if fill_zero_cols:
             out[fill_zero_cols] = out[fill_zero_cols].fillna(0)
         return out

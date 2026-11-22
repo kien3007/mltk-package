@@ -56,7 +56,9 @@ class ModelArena(BaseStep):
 
     def _build_zoo(self, task_type: TaskType) -> dict[str, Any]:
         rs = self.random_state
-        imb = self.handle_imbalance  # False keeps raw class priors => better calibrated probabilities
+        imb = (
+            self.handle_imbalance
+        )  # False keeps raw class priors => better calibrated probabilities
         factories = {
             "linear": (
                 "Linear Model",
@@ -64,7 +66,9 @@ class ModelArena(BaseStep):
             ),
             "random_forest": (
                 "Random Forest",
-                lambda: RandomForestTrainer(task_type=task_type, random_state=rs, handle_imbalance=imb),
+                lambda: RandomForestTrainer(
+                    task_type=task_type, random_state=rs, handle_imbalance=imb
+                ),
             ),
             "lightgbm": (
                 "LightGBM",
@@ -119,7 +123,9 @@ class ModelArena(BaseStep):
                 "Score": round(score, 4),
             }
             if task_type == "classification":
-                rec["ROC-AUC"] = f"{res.get('roc_auc_mean', 0):.4f} ± {res.get('roc_auc_std', 0):.4f}"
+                rec["ROC-AUC"] = (
+                    f"{res.get('roc_auc_mean', 0):.4f} ± {res.get('roc_auc_std', 0):.4f}"
+                )
                 rec["Accuracy"] = f"{res.get('accuracy_mean', 0) * 100:.2f}%"
                 rec["F1"] = f"{res.get('f1_mean', 0):.4f}"
             else:
@@ -148,7 +154,11 @@ class ModelArena(BaseStep):
         winning_trainer = candidates[winner_name][1]
 
         # 3. Gate enforcement
-        if self.enforce_baseline_gate and (cfg is None or cfg.baseline_gate) and not passed_baseline:
+        if (
+            self.enforce_baseline_gate
+            and (cfg is None or cfg.baseline_gate)
+            and not passed_baseline
+        ):
             msg = f"Best candidate '{winner_name}' ({winner_score:.4f}) failed to beat naive baseline ({baseline_score:.4f})."
             self.report_.add("baseline_gate", "error", msg)
             raise BaselineComparisonError(msg)

@@ -27,14 +27,24 @@ def load(data_dir: Path) -> dict[str, pd.DataFrame]:
     tx = pd.read_csv(
         data_dir / "transaction_data.csv",
         usecols=[
-            "household_key", "BASKET_ID", "DAY", "PRODUCT_ID", "QUANTITY", "SALES_VALUE",
-            "STORE_ID", "RETAIL_DISC", "COUPON_DISC", "COUPON_MATCH_DISC",
+            "household_key",
+            "BASKET_ID",
+            "DAY",
+            "PRODUCT_ID",
+            "QUANTITY",
+            "SALES_VALUE",
+            "STORE_ID",
+            "RETAIL_DISC",
+            "COUPON_DISC",
+            "COUPON_MATCH_DISC",
         ],
     )
     tx = tx[(tx["QUANTITY"] > 0) & (tx["SALES_VALUE"] > 0)].copy()
     tx["disc"] = -(tx["RETAIL_DISC"] + tx["COUPON_DISC"] + tx["COUPON_MATCH_DISC"])
     tx["coupon"] = -(tx["COUPON_DISC"] + tx["COUPON_MATCH_DISC"])
-    prod = pd.read_csv(data_dir / "product.csv", usecols=["PRODUCT_ID", "DEPARTMENT", "COMMODITY_DESC"])
+    prod = pd.read_csv(
+        data_dir / "product.csv", usecols=["PRODUCT_ID", "DEPARTMENT", "COMMODITY_DESC"]
+    )
     tx = tx.merge(prod, on="PRODUCT_ID", how="left")
     return {
         "tx": tx.sort_values("DAY").reset_index(drop=True),
@@ -68,7 +78,9 @@ def build_cutoff(
             "coupon_90": g["coupon"].sum(),
         }
     )
-    feats["disc_share_90"] = feats["disc_90"] / (feats["spend_90"] + feats["disc_90"]).clip(lower=1e-6)
+    feats["disc_share_90"] = feats["disc_90"] / (feats["spend_90"] + feats["disc_90"]).clip(
+        lower=1e-6
+    )
     feats["spend_per_basket_90"] = feats["spend_90"] / feats["n_baskets_90"]
     feats["n_shop_days_90"] = w.groupby("household_key")["DAY"].nunique()
     g28 = w28.groupby("household_key")
@@ -83,9 +95,13 @@ def build_cutoff(
 
     # Lifetime rhythm up to T (shopping-day level)
     hd = hh_day[hh_day["DAY"] <= t]
-    life = hd.groupby("household_key")["DAY"].agg(first_day="min", last_day="max", n_shop_days_life="nunique")
+    life = hd.groupby("household_key")["DAY"].agg(
+        first_day="min", last_day="max", n_shop_days_life="nunique"
+    )
     gaps = hd.groupby("household_key")["DAY"].diff().dropna()
-    gap_stats = gaps.groupby(hd.loc[gaps.index, "household_key"]).agg(ipi_mean="mean", ipi_std="std")
+    gap_stats = gaps.groupby(hd.loc[gaps.index, "household_key"]).agg(
+        ipi_mean="mean", ipi_std="std"
+    )
     feats = feats.join(life).join(gap_stats)
     feats["recency"] = t - feats["last_day"]
     feats["tenure"] = t - feats["first_day"]
@@ -96,9 +112,17 @@ def build_cutoff(
     ch = d["camp_hh"].merge(d["camp_desc"][["CAMPAIGN", "START_DAY", "END_DAY"]], on="CAMPAIGN")
     ended = ch[ch["END_DAY"] <= t].groupby("household_key").size().rename("n_campaigns_ended")
     active = (
-        ch[(ch["START_DAY"] <= t) & (ch["END_DAY"] > t)].groupby("household_key").size().rename("in_active_campaign")
+        ch[(ch["START_DAY"] <= t) & (ch["END_DAY"] > t)]
+        .groupby("household_key")
+        .size()
+        .rename("in_active_campaign")
     )
-    red = d["redeem"][d["redeem"]["DAY"] <= t].groupby("household_key").size().rename("n_redemptions_before")
+    red = (
+        d["redeem"][d["redeem"]["DAY"] <= t]
+        .groupby("household_key")
+        .size()
+        .rename("n_redemptions_before")
+    )
     feats = feats.join(ended).join(active).join(red)
     feats[["n_campaigns_ended", "in_active_campaign", "n_redemptions_before"]] = feats[
         ["n_campaigns_ended", "in_active_campaign", "n_redemptions_before"]
@@ -117,17 +141,22 @@ def main() -> None:
     ap.add_argument("--out-dir", default=Path("artifacts/dunnhumby"), type=Path)
     ap.add_argument("--pred-days", type=int, default=7, help="Prediction window length")
     ap.add_argument("--obs-days", type=int, default=90, help="Observation window length")
-    ap.add_argument("--step", type=int, default=None, help="Days between cutoffs (default: pred-days)")
+    ap.add_argument(
+        "--step", type=int, default=None, help="Days between cutoffs (default: pred-days)"
+    )
     args = ap.parse_args()
 
     d = load(args.data_dir)
-    hh_day = d["tx"].groupby(["household_key", "DAY"], as_index=False).size()[["household_key", "DAY"]]
+    hh_day = (
+        d["tx"].groupby(["household_key", "DAY"], as_index=False).size()[["household_key", "DAY"]]
+    )
     hh_day = hh_day.sort_values(["household_key", "DAY"]).reset_index(drop=True)
 
     step = args.step or args.pred_days
     cutoffs = list(range(120, MAX_DAY - args.pred_days + 1, step))
     panel = pd.concat(
-        [build_cutoff(t, d, hh_day, args.obs_days, args.pred_days) for t in cutoffs], ignore_index=True
+        [build_cutoff(t, d, hh_day, args.obs_days, args.pred_days) for t in cutoffs],
+        ignore_index=True,
     )
     panel = panel.merge(d["demo"], on="household_key", how="left")
 
@@ -154,7 +183,9 @@ modelling:
 """,
         encoding="utf-8",
     )
-    print(f"cutoffs={len(cutoffs)} rows={len(panel):,} households={panel['household_key'].nunique():,}")
+    print(
+        f"cutoffs={len(cutoffs)} rows={len(panel):,} households={panel['household_key'].nunique():,}"
+    )
     print(f"positive rate={panel['target'].mean():.3f}")
     print(panel.groupby("cutoff")["target"].agg(["size", "mean"]).round(3).to_string())
 

@@ -43,7 +43,9 @@ class BaseStep(BaseEstimator, TransformerMixin):
         if not isinstance(X, pd.DataFrame):
             X = pd.DataFrame(X)
 
-        self.report_ = Report(title=self.report_.title if hasattr(self, "report_") else self.__class__.__name__)
+        self.report_ = Report(
+            title=self.report_.title if hasattr(self, "report_") else self.__class__.__name__
+        )
         self.feature_names_in_ = [str(c) for c in X.columns]
         self._fit(X.copy(), y=y, cfg=cfg, **fit_params)
         self._is_fitted = True

@@ -52,7 +52,9 @@ def cmd_run(
     with run_context() as run_id:
         logger.info("Run %s: config=%s data=%s", run_id, config_path, resolved)
         try:
-            result = train(cfg, read_table(resolved), output_dir=output_dir, html_report=html_report)
+            result = train(
+                cfg, read_table(resolved), output_dir=output_dir, html_report=html_report
+            )
         except MLKitError as exc:
             logger.error("%s: %s", type(exc).__name__, exc)
             return 1
@@ -62,7 +64,12 @@ def cmd_run(
             import pandas as pd
 
             print(pd.DataFrame(arena_rows).to_string(index=False))
-        print(json.dumps({"champion": result.metrics.get("champion"), "holdout": result.metrics["holdout"]}, indent=2))
+        print(
+            json.dumps(
+                {"champion": result.metrics.get("champion"), "holdout": result.metrics["holdout"]},
+                indent=2,
+            )
+        )
         print(result.drift_report.summary())
 
         if cfg.tracking.get("mlflow"):
@@ -80,7 +87,9 @@ def cmd_run(
     return 0
 
 
-def cmd_predict(bundle_path: str, data_path: str, out_path: str | None = None, threshold: float = 0.5) -> int:
+def cmd_predict(
+    bundle_path: str, data_path: str, out_path: str | None = None, threshold: float = 0.5
+) -> int:
     """Score a batch file with a saved bundle."""
     try:
         preds = predict_bundle(bundle_path, read_table(data_path), threshold=threshold)
@@ -139,10 +148,14 @@ def cmd_steps() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="mlkit", description="MLKit CLI: 6-stage tabular ML pipeline runner")
+    parser = argparse.ArgumentParser(
+        prog="mlkit", description="MLKit CLI: 6-stage tabular ML pipeline runner"
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
     parser.add_argument("-q", "--quiet", action="store_true", help="Only warnings and errors")
-    parser.add_argument("--log-json", action="store_true", help="Emit structured JSON logs (ADR-002)")
+    parser.add_argument(
+        "--log-json", action="store_true", help="Emit structured JSON logs (ADR-002)"
+    )
     sub = parser.add_subparsers(dest="command")
 
     run_p = sub.add_parser("run", help="Train the pipeline from a config file")
@@ -155,13 +168,17 @@ def build_parser() -> argparse.ArgumentParser:
     pred_p.add_argument("bundle")
     pred_p.add_argument("data")
     pred_p.add_argument("--out", help="Output file (csv/parquet/json). Defaults to stdout.")
-    pred_p.add_argument("--threshold", type=float, default=0.5, help="Decision threshold (classification)")
+    pred_p.add_argument(
+        "--threshold", type=float, default=0.5, help="Decision threshold (classification)"
+    )
 
     mon_p = sub.add_parser("monitor", help="Check a batch for drift against a saved bundle")
     mon_p.add_argument("bundle")
     mon_p.add_argument("data")
     mon_p.add_argument("--out", help="Write report (.json or .html)")
-    mon_p.add_argument("--fail-on", choices=["warn", "error"], default="error", help="Exit 2 at this severity")
+    mon_p.add_argument(
+        "--fail-on", choices=["warn", "error"], default="error", help="Exit 2 at this severity"
+    )
 
     srv_p = sub.add_parser("serve", help="Serve a bundle over HTTP (requires mlkit[serve])")
     srv_p.add_argument("bundle")
@@ -180,7 +197,9 @@ def main(argv: list[str] | None = None) -> None:
     configure_logging(level=level, json_format=args.log_json)
 
     if args.command == "run":
-        code = cmd_run(args.config, data_path=args.data, output_dir=args.out, html_report=args.html_report)
+        code = cmd_run(
+            args.config, data_path=args.data, output_dir=args.out, html_report=args.html_report
+        )
     elif args.command == "predict":
         code = cmd_predict(args.bundle, args.data, out_path=args.out, threshold=args.threshold)
     elif args.command == "monitor":

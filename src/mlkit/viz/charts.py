@@ -75,7 +75,13 @@ def plot_missing_rates(
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.barh(missing.index[::-1], missing.values[::-1], color=colors[::-1])
-    ax.axvline(x=threshold, color="gray", linestyle="--", linewidth=1.2, label=f"Threshold ({threshold:.0%})")
+    ax.axvline(
+        x=threshold,
+        color="gray",
+        linestyle="--",
+        linewidth=1.2,
+        label=f"Threshold ({threshold:.0%})",
+    )
     ax.set_xlim(0, 1)
     ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
     _apply_style(ax, "Missing Rate per Column", xlabel="Missing Rate")
@@ -209,16 +215,26 @@ def plot_arena_comparison(
         metric = "Score"
 
     if metric not in df.columns:
-        raise ValueError(f"Column '{metric}' not found in comparison table. Available: {list(df.columns)}")
+        raise ValueError(
+            f"Column '{metric}' not found in comparison table. Available: {list(df.columns)}"
+        )
 
     df = df.sort_values(metric, ascending=True)
-    colors = [_PALETTE["error"] if "Baseline" in str(m) else _PALETTE["neutral"] for m in df["Model"]]
+    colors = [
+        _PALETTE["error"] if "Baseline" in str(m) else _PALETTE["neutral"] for m in df["Model"]
+    ]
 
     fig, ax = plt.subplots(figsize=figsize)
     bars = ax.barh(df["Model"], df[metric], color=colors)
 
     for bar, val in zip(bars, df[metric], strict=False):
-        ax.text(bar.get_width() + 0.001, bar.get_y() + bar.get_height() / 2, f"{val:.4f}", va="center", fontsize=9)
+        ax.text(
+            bar.get_width() + 0.001,
+            bar.get_y() + bar.get_height() / 2,
+            f"{val:.4f}",
+            va="center",
+            fontsize=9,
+        )
 
     _apply_style(ax, f"Model Arena — {metric}", xlabel=metric)
     fig.tight_layout()
@@ -258,7 +274,9 @@ def plot_feature_importance(
 
     if hasattr(arena, "feature_importances_"):
         importances = np.asarray(arena.feature_importances_)
-    elif hasattr(arena, "best_estimator_") and hasattr(arena.best_estimator_, "feature_importances_"):
+    elif hasattr(arena, "best_estimator_") and hasattr(
+        arena.best_estimator_, "feature_importances_"
+    ):
         importances = np.asarray(arena.best_estimator_.feature_importances_)
     else:
         raise ValueError("No 'feature_importances_' found on the provided object.")
@@ -330,7 +348,14 @@ def plot_drift_psi(
 
     if not rows:
         fig, ax = plt.subplots(figsize=figsize)
-        ax.text(0.5, 0.5, "No numeric drift data found in report.", ha="center", va="center", transform=ax.transAxes)
+        ax.text(
+            0.5,
+            0.5,
+            "No numeric drift data found in report.",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
         return fig
 
     psi_df = pd.DataFrame(rows).sort_values("PSI", ascending=True)
@@ -345,8 +370,20 @@ def plot_drift_psi(
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.barh(psi_df["Feature"], psi_df["PSI"], color=colors)
-    ax.axvline(x=warn_threshold, color=_PALETTE["warn"], linestyle="--", linewidth=1.2, label=f"Warn ({warn_threshold})")
-    ax.axvline(x=error_threshold, color=_PALETTE["error"], linestyle="--", linewidth=1.2, label=f"Error ({error_threshold})")
+    ax.axvline(
+        x=warn_threshold,
+        color=_PALETTE["warn"],
+        linestyle="--",
+        linewidth=1.2,
+        label=f"Warn ({warn_threshold})",
+    )
+    ax.axvline(
+        x=error_threshold,
+        color=_PALETTE["error"],
+        linestyle="--",
+        linewidth=1.2,
+        label=f"Error ({error_threshold})",
+    )
     _apply_style(ax, "Feature Drift — PSI Score", xlabel="PSI")
     ax.legend(fontsize=9)
     fig.tight_layout()
@@ -491,7 +528,9 @@ def plot_calibration_curve(
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.plot([0, 1], [0, 1], "k--", label="Perfect Calibration", alpha=0.6)
-    ax.plot(prob_pred, prob_true, "s-", color=_PALETTE["neutral"], label=f"Model (Brier={brier:.4f})")
+    ax.plot(
+        prob_pred, prob_true, "s-", color=_PALETTE["neutral"], label=f"Model (Brier={brier:.4f})"
+    )
     _apply_style(
         ax,
         "Probability Calibration Curve",
@@ -528,7 +567,9 @@ def plot_precision_recall_curve(
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.plot(recall, precision, color=_PALETTE["neutral"], lw=2, label=f"Model (AP = {ap:.4f})")
-    ax.axhline(y=baseline_rate, color="gray", linestyle="--", label=f"No Skill ({baseline_rate:.2%})")
+    ax.axhline(
+        y=baseline_rate, color="gray", linestyle="--", label=f"No Skill ({baseline_rate:.2%})"
+    )
     ax.fill_between(recall, precision, alpha=0.1, color=_PALETTE["neutral"])
     _apply_style(ax, "Precision-Recall Curve", xlabel="Recall", ylabel="Precision")
     ax.set_xlim((0.0, 1.0))
@@ -565,7 +606,13 @@ def plot_cumulative_gains(
     cum_gains_plot = np.insert(cum_gains, 0, 0.0)
 
     fig, ax = plt.subplots(figsize=figsize)
-    ax.plot(percentage_pop * 100, cum_gains_plot * 100, color=_PALETTE["neutral"], lw=2.2, label="Model Gains")
+    ax.plot(
+        percentage_pop * 100,
+        cum_gains_plot * 100,
+        color=_PALETTE["neutral"],
+        lw=2.2,
+        label="Model Gains",
+    )
     ax.plot([0, 100], [0, 100], "k--", alpha=0.6, label="Random Guess (Baseline)")
 
     # Highlight top 20% point
@@ -581,7 +628,12 @@ def plot_cumulative_gains(
         fontweight="bold",
     )
 
-    _apply_style(ax, "Cumulative Gains Chart", xlabel="% Population Contacted / Screened", ylabel="% Positive Targets Captured")
+    _apply_style(
+        ax,
+        "Cumulative Gains Chart",
+        xlabel="% Population Contacted / Screened",
+        ylabel="% Positive Targets Captured",
+    )
     ax.set_xlim((0, 100))
     ax.set_ylim((0, 105))
     ax.legend(fontsize=9, loc="lower right")
@@ -606,7 +658,9 @@ def plot_lift_curve(
 
     y_t = np.asarray(y_true)
     df_lift = pd.DataFrame({"y": y_t, "prob": y_prob}).sort_values("prob", ascending=False)
-    df_lift["decile"] = pd.qcut(range(len(df_lift)), q=n_deciles, labels=[f"D{i+1}" for i in range(n_deciles)])
+    df_lift["decile"] = pd.qcut(
+        range(len(df_lift)), q=n_deciles, labels=[f"D{i + 1}" for i in range(n_deciles)]
+    )
 
     base_rate = df_lift["y"].mean()
     if base_rate == 0:
@@ -620,9 +674,20 @@ def plot_lift_curve(
     ax.axhline(y=1.0, color="red", linestyle="--", lw=1.5, label="Random Guess (Lift = 1.0x)")
 
     for bar, lift in zip(bars, lifts.values, strict=False):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.05, f"{lift:.1f}x", ha="center", fontsize=8.5)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.05,
+            f"{lift:.1f}x",
+            ha="center",
+            fontsize=8.5,
+        )
 
-    _apply_style(ax, f"Decile Lift Curve (Base Rate: {base_rate:.2%})", xlabel="Deciles (D1 = Highest Predicted Risk)", ylabel="Lift Multiplier")
+    _apply_style(
+        ax,
+        f"Decile Lift Curve (Base Rate: {base_rate:.2%})",
+        xlabel="Deciles (D1 = Highest Predicted Risk)",
+        ylabel="Lift Multiplier",
+    )
     ax.legend(fontsize=9)
     fig.tight_layout()
     return fig
@@ -699,12 +764,22 @@ def plot_learning_curve(
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.plot(train_sizes, train_mean, "o-", color=_PALETTE["neutral"], label="Training Score")
-    ax.fill_between(train_sizes, train_mean - train_std, train_mean + train_std, alpha=0.15, color=_PALETTE["neutral"])
+    ax.fill_between(
+        train_sizes,
+        train_mean - train_std,
+        train_mean + train_std,
+        alpha=0.15,
+        color=_PALETTE["neutral"],
+    )
 
     ax.plot(train_sizes, val_mean, "s-", color=_PALETTE["ok"], label="Cross-Validation Score")
-    ax.fill_between(train_sizes, val_mean - val_std, val_mean + val_std, alpha=0.15, color=_PALETTE["ok"])
+    ax.fill_between(
+        train_sizes, val_mean - val_std, val_mean + val_std, alpha=0.15, color=_PALETTE["ok"]
+    )
 
-    _apply_style(ax, "Model Learning Curve (Sample Efficiency)", xlabel="Training Examples", ylabel="Score")
+    _apply_style(
+        ax, "Model Learning Curve (Sample Efficiency)", xlabel="Training Examples", ylabel="Score"
+    )
     ax.legend(fontsize=9, loc="lower right")
     fig.tight_layout()
     return fig
@@ -752,8 +827,10 @@ def plot_shap_summary(
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.barh(top_cols, top_vals, color=_PALETTE["neutral"])
-    _apply_style(ax, f"SHAP Feature Importance (Mean |SHAP Value|, Top {top_n})", xlabel="Mean |SHAP Value| (Impact on Model Output)")
+    _apply_style(
+        ax,
+        f"SHAP Feature Importance (Mean |SHAP Value|, Top {top_n})",
+        xlabel="Mean |SHAP Value| (Impact on Model Output)",
+    )
     fig.tight_layout()
     return fig
-
-

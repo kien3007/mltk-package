@@ -348,7 +348,9 @@ class CategoricalEncoder(BaseStep):
             for tr_idx, val_idx in kf.split(keys):
                 prior = float(np.nanmean(y_num[tr_idx]))
                 fold_map = self._smoothed_map(keys.iloc[tr_idx], y_num[tr_idx], prior)
-                oof[val_idx] = keys.iloc[val_idx].map(fold_map).astype(float).fillna(prior).to_numpy()
+                oof[val_idx] = (
+                    keys.iloc[val_idx].map(fold_map).astype(float).fillna(prior).to_numpy()
+                )
             out[col] = oof
         self.report_.add(
             "target_encoding_oof",

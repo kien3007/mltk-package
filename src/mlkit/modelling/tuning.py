@@ -164,7 +164,9 @@ class OptunaSearch(BaseStep):
             params = self.space(trial)
             # keep the *full* dict (incl. constants such as subsample_freq) for the final refit
             trial.set_user_attr("params", params)
-            estimator = self.estimator_cls(task_type=task_type, random_state=self.random_state, **params)
+            estimator = self.estimator_cls(
+                task_type=task_type, random_state=self.random_state, **params
+            )
             try:
                 res = evaluator.evaluate(estimator, X, y_arr, cfg=cfg)
                 return float(res["primary_score"])
@@ -174,7 +176,9 @@ class OptunaSearch(BaseStep):
 
         sampler = optuna.samplers.TPESampler(seed=self.random_state)
         study = optuna.create_study(direction=direction, sampler=sampler)
-        study.optimize(objective, n_trials=self.n_trials, timeout=self.timeout, show_progress_bar=False)
+        study.optimize(
+            objective, n_trials=self.n_trials, timeout=self.timeout, show_progress_bar=False
+        )
 
         self.study_ = study
         # study.best_params only holds suggested values; constants from the space live in user_attrs
