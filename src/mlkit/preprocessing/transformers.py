@@ -23,12 +23,14 @@ class TypeCaster(BaseStep):
         drop_id: bool = True,
         drop_cols: list[str] | None = None,
         drop_group_col: bool = True,
+        drop_time_col: bool = True,
     ) -> None:
         super().__init__()
         self.dtypes = dtypes
         self.drop_id = drop_id
         self.drop_cols = drop_cols
         self.drop_group_col = drop_group_col
+        self.drop_time_col = drop_time_col
         self.inferred_dtypes_: dict[str, str] = {}
         self.dropped_cols_: list[str] = []
 
@@ -47,6 +49,17 @@ class TypeCaster(BaseStep):
         ):
             # Group keys are split keys, not features: keeping them leaks identity across folds.
             self.dropped_cols_.append(group_col)
+        time_col = cfg.time_col if cfg else None
+        if (
+            self.drop_time_col
+            and time_col
+            and time_col in X.columns
+            and time_col not in self.dropped_cols_
+        ):
+            # An absolute time index only encodes "when": it cannot extrapolate to future
+            # periods and lets the model memorise period effects. Derive parts upstream
+            # (DatetimeFeatures) or set drop_time_col=False to keep it deliberately.
+            self.dropped_cols_.append(time_col)
 
         # Detect prospective ID columns by name or uniqueness
         for c in X.columns:
@@ -335,7 +348,9 @@ class CategoricalEncoder(BaseStep):
             for tr_idx, val_idx in kf.split(keys):
                 prior = float(np.nanmean(y_num[tr_idx]))
                 fold_map = self._smoothed_map(keys.iloc[tr_idx], y_num[tr_idx], prior)
-                oof[val_idx] = keys.iloc[val_idx].map(fold_map).astype(float).fillna(prior).to_numpy()
+                oof[val_idx] = (
+                    keys.iloc[val_idx].map(fold_map).astype(float).fillna(prior).to_numpy()
+                )
             out[col] = oof
         self.report_.add(
             "target_encoding_oof",

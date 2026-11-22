@@ -101,7 +101,9 @@ def save_bundle(
     files = ["pipeline.joblib", "config.yaml", "schema.json", "baseline.json", "metrics.json"]
 
     if report is not None:
-        _write_json(bundle_dir / "report.json", report.to_dict() if hasattr(report, "to_dict") else report)
+        _write_json(
+            bundle_dir / "report.json", report.to_dict() if hasattr(report, "to_dict") else report
+        )
         files.append("report.json")
 
     _write_json(bundle_dir / "versions.json", get_environment_versions())
@@ -175,7 +177,13 @@ def load_bundle(path: str | Path, verify: bool = True) -> tuple[Any, TaskConfig,
     cfg = TaskConfig.from_yaml(bundle_dir / "config.yaml")
 
     metadata: dict[str, Any] = {}
-    for meta_file in ["schema.json", "baseline.json", "metrics.json", "report.json", "versions.json"]:
+    for meta_file in [
+        "schema.json",
+        "baseline.json",
+        "metrics.json",
+        "report.json",
+        "versions.json",
+    ]:
         p = bundle_dir / meta_file
         if p.exists():
             with open(p, encoding="utf-8") as f:

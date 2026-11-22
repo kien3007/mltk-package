@@ -65,7 +65,10 @@ def main() -> None:
             ("binning", BinningFeatures(columns=["HouseAge"], n_bins=5)),
             ("variance_filter", VarianceFilter(threshold=0.0)),
             ("corr_filter", CorrelationFilter(threshold=0.98)),
-            ("modelling_arena", ModelArena(cv=cfg.cv_folds, enforce_baseline_gate=True, random_state=cfg.seed)),
+            (
+                "modelling_arena",
+                ModelArena(cv=cfg.cv_folds, enforce_baseline_gate=True, random_state=cfg.seed),
+            ),
         ]
     )
 

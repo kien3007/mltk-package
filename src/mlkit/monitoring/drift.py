@@ -106,6 +106,7 @@ class DriftMonitor(BaseStep):
         sample_size: int = 5000,
         unseen_threshold_warn: float = 0.05,
         random_state: int = 42,
+        exclude: list[str] | None = None,
     ) -> None:
         super().__init__()
         self.psi_threshold_warn = psi_threshold_warn
@@ -115,6 +116,7 @@ class DriftMonitor(BaseStep):
         self.sample_size = sample_size
         self.unseen_threshold_warn = unseen_threshold_warn
         self.random_state = random_state
+        self.exclude = exclude
 
         self.numeric_baselines_: dict[str, dict[str, Any]] = {}
         self.categorical_baselines_: dict[str, dict[str, float]] = {}
@@ -127,7 +129,11 @@ class DriftMonitor(BaseStep):
         edges = quantile_bin_edges(values, self.num_buckets)
         counts, _ = np.histogram(values, bins=edges) if len(values) else (np.zeros(1), None)
         rng = np.random.default_rng(self.random_state)
-        sample = values if len(values) <= self.sample_size else rng.choice(values, self.sample_size, replace=False)
+        sample = (
+            values
+            if len(values) <= self.sample_size
+            else rng.choice(values, self.sample_size, replace=False)
+        )
         return {
             "edges": [float(e) for e in edges],
             "proportions": [float(c) for c in (counts / max(len(values), 1))],
@@ -142,7 +148,13 @@ class DriftMonitor(BaseStep):
         self.categorical_baselines_ = {}
         self.categorical_counts_ = {}
 
-        num_cols = [c for c in X.columns if pd.api.types.is_numeric_dtype(X[c]) and not pd.api.types.is_bool_dtype(X[c])]
+        excluded = set(self.exclude or [])
+        X = X.drop(columns=[c for c in X.columns if c in excluded])
+        num_cols = [
+            c
+            for c in X.columns
+            if pd.api.types.is_numeric_dtype(X[c]) and not pd.api.types.is_bool_dtype(X[c])
+        ]
         for c in num_cols:
             self.numeric_baselines_[str(c)] = self._numeric_snapshot(X[c].to_numpy(dtype=float))
 
@@ -181,6 +193,7 @@ class DriftMonitor(BaseStep):
                 "num_buckets": self.num_buckets,
                 "sample_size": self.sample_size,
                 "unseen_threshold_warn": self.unseen_threshold_warn,
+                "exclude": self.exclude,
             },
             "numeric": self.numeric_baselines_,
             "categorical": self.categorical_baselines_,
@@ -204,7 +217,9 @@ class DriftMonitor(BaseStep):
         return monitor
 
     # -------------------------------------------------------------- monitor
-    def _numeric_check(self, report: Report, name: str, base: dict[str, Any], values: np.ndarray) -> None:
+    def _numeric_check(
+        self, report: Report, name: str, base: dict[str, Any], values: np.ndarray
+    ) -> None:
         values = values[~np.isnan(values)]
         if len(values) == 0:
             report.add(name, "warn", "No non-null values in current batch.")
@@ -241,7 +256,9 @@ class DriftMonitor(BaseStep):
 
         base_counts = base_pct * n_base
         total = base_counts + curr_counts
-        expected_min = np.minimum(total * n_base / (n_base + n_curr), total * n_curr / (n_base + n_curr))
+        expected_min = np.minimum(
+            total * n_base / (n_base + n_curr), total * n_curr / (n_base + n_curr)
+        )
         keep = expected_min >= 5
         table = np.vstack(
             [
@@ -278,16 +295,24 @@ class DriftMonitor(BaseStep):
             if curr.empty:
                 continue
             counts = curr.value_counts()
-            unseen_share = float(counts[[c for c in counts.index if c not in base_props]].sum() / len(curr))
+            unseen_share = float(
+                counts[[c for c in counts.index if c not in base_props]].sum() / len(curr)
+            )
             cats = list(base_props)
             exp_pct = np.array([base_props[c] for c in cats] + [0.0])
-            act_pct = np.array([counts.get(c, 0) for c in cats] + [len(curr) * unseen_share]) / len(curr)
+            act_pct = np.array([counts.get(c, 0) for c in cats] + [len(curr) * unseen_share]) / len(
+                curr
+            )
             psi = _psi_from_proportions(exp_pct, act_pct)
 
-            p_val = self._chi2_two_sample(exp_pct, act_pct, self.categorical_counts_.get(col), len(curr))
+            p_val = self._chi2_two_sample(
+                exp_pct, act_pct, self.categorical_counts_.get(col), len(curr)
+            )
 
             status = _status_for_psi(psi, self.psi_threshold_warn, self.psi_threshold_error)
-            if status == "ok" and (p_val < self.ks_pvalue_threshold or unseen_share > self.unseen_threshold_warn):
+            if status == "ok" and (
+                p_val < self.ks_pvalue_threshold or unseen_share > self.unseen_threshold_warn
+            ):
                 status = "warn"
             report.add(
                 f"cat_drift_{col}",

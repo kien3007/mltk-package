@@ -74,7 +74,10 @@ def main() -> None:
             ("variance_filter", VarianceFilter(threshold=0.0)),
             ("corr_filter", CorrelationFilter(threshold=0.95)),
             ("importance_selector", ModelImportanceSelector(top_k=25)),
-            ("modelling_arena", ModelArena(cv=cfg.cv_folds, enforce_baseline_gate=True, random_state=cfg.seed)),
+            (
+                "modelling_arena",
+                ModelArena(cv=cfg.cv_folds, enforce_baseline_gate=True, random_state=cfg.seed),
+            ),
         ]
     )
 

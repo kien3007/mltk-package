@@ -8,6 +8,7 @@ from mlkit.modelling.evaluation import (
     CVEvaluator,
     compute_bootstrap_ci,
     compute_metrics,
+    expected_calibration_error,
 )
 from mlkit.modelling.trainers import (
     DummyTrainer,
@@ -35,4 +36,5 @@ __all__ = [
     "XGBTrainer",
     "compute_bootstrap_ci",
     "compute_metrics",
+    "expected_calibration_error",
 ]

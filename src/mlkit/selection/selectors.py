@@ -61,7 +61,9 @@ class CorrelationFilter(BaseStep):
         self.selected_features_: list[str] = []
         self.dropped_features_: dict[str, str] = {}
 
-    def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> CorrelationFilter:
+    def _fit(
+        self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None
+    ) -> CorrelationFilter:
         num_cols = list(X.select_dtypes(include=[np.number]).columns)
         self.dropped_features_ = {}
 
@@ -72,7 +74,9 @@ class CorrelationFilter(BaseStep):
                 high_corr = upper_tri[col][upper_tri[col] >= self.threshold]
                 if not high_corr.empty:
                     lead_col = high_corr.index[0]
-                    self.dropped_features_[col] = f"Correlation {high_corr.iloc[0]:.4f} >= {self.threshold} with '{lead_col}'"
+                    self.dropped_features_[col] = (
+                        f"Correlation {high_corr.iloc[0]:.4f} >= {self.threshold} with '{lead_col}'"
+                    )
 
         non_num = [c for c in X.columns if c not in num_cols]
         kept_num = [c for c in num_cols if c not in self.dropped_features_]
@@ -102,7 +106,9 @@ class MutualInformationSelector(BaseStep):
         self.selected_features_: list[str] = []
         self.scores_: dict[str, float] = {}
 
-    def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> MutualInformationSelector:
+    def _fit(
+        self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None
+    ) -> MutualInformationSelector:
         if y is None:
             self.selected_features_ = list(X.columns)
             return self
@@ -143,15 +149,24 @@ class MutualInformationSelector(BaseStep):
 class ModelImportanceSelector(BaseStep):
     """Select top features using tree-based importance weights."""
 
-    def __init__(self, top_k: int | None = None, threshold: float | None = None, random_state: int = 42) -> None:
+    def __init__(
+        self,
+        top_k: int | None = None,
+        threshold: float | None = None,
+        random_state: int = 42,
+        n_jobs: int | None = -1,
+    ) -> None:
         super().__init__()
         self.top_k = top_k
         self.threshold = threshold
         self.random_state = random_state
+        self.n_jobs = n_jobs
         self.selected_features_: list[str] = []
         self.importances_: dict[str, float] = {}
 
-    def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> ModelImportanceSelector:
+    def _fit(
+        self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None
+    ) -> ModelImportanceSelector:
         if y is None:
             self.selected_features_ = list(X.columns)
             return self
@@ -166,13 +181,19 @@ class ModelImportanceSelector(BaseStep):
 
         is_classif = cfg.task_type == "classification" if cfg else len(np.unique(y_arr)) <= 20
         est = (
-            ExtraTreesClassifier(n_estimators=50, random_state=self.random_state)
+            ExtraTreesClassifier(
+                n_estimators=50, random_state=self.random_state, n_jobs=self.n_jobs
+            )
             if is_classif
-            else ExtraTreesRegressor(n_estimators=50, random_state=self.random_state)
+            else ExtraTreesRegressor(
+                n_estimators=50, random_state=self.random_state, n_jobs=self.n_jobs
+            )
         )
         est.fit(X_num, y_arr)
 
-        sorted_pairs = sorted(zip(num_cols, est.feature_importances_, strict=False), key=lambda x: x[1], reverse=True)
+        sorted_pairs = sorted(
+            zip(num_cols, est.feature_importances_, strict=False), key=lambda x: x[1], reverse=True
+        )
         self.importances_ = {c: float(v) for c, v in sorted_pairs}
 
         if self.top_k is not None:

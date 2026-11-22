@@ -35,7 +35,12 @@ class TestTargetEncodingLeakage:
         X = _high_card_frame()
         y = pd.Series(rng.integers(0, 2, len(X)))
         arena = ModelArena(cv=3, enforce_baseline_gate=False, candidates=["linear"])
-        pipe = Pipeline([("enc", CategoricalEncoder(low_card_threshold=5, high_card_threshold=20)), ("arena", arena)])
+        pipe = Pipeline(
+            [
+                ("enc", CategoricalEncoder(low_card_threshold=5, high_card_threshold=20)),
+                ("arena", arena),
+            ]
+        )
         pipe.fit(X, y, cfg=TaskConfig(task_type="classification", target="y"))
 
         assert pipe.named_steps["enc"].encoding_plan_["hc"] == "target"
@@ -106,10 +111,23 @@ class TestPreprocessingRobustness:
         cfg = TaskConfig(target="y", group_col="cust")
         assert list(TypeCaster().fit_transform(df, cfg=cfg).columns) == ["x"]
 
+    def test_type_caster_drops_time_col_unless_disabled(self):
+        from mlkit.preprocessing import TypeCaster
+
+        df = pd.DataFrame({"day": [1, 2, 3], "x": [1.0, 2.0, 3.0]})
+        cfg = TaskConfig(target="y", time_col="day")
+        assert list(TypeCaster().fit_transform(df, cfg=cfg).columns) == ["x"]
+        assert list(TypeCaster(drop_time_col=False).fit_transform(df, cfg=cfg).columns) == [
+            "day",
+            "x",
+        ]
+
     def test_datetime_detected_on_category_dtype_and_time_col(self):
         from mlkit.features import DatetimeFeatures
 
-        df = pd.DataFrame({"ts": pd.Series(["2024-01-01", "2024-06-15", "2024-12-31"], dtype="category")})
+        df = pd.DataFrame(
+            {"ts": pd.Series(["2024-01-01", "2024-06-15", "2024-12-31"], dtype="category")}
+        )
         out = DatetimeFeatures().fit_transform(df, cfg=TaskConfig(target="y", time_col="ts"))
         assert "ts_month" in out.columns and "ts" not in out.columns
 
@@ -129,6 +147,29 @@ class TestPipelineAndConfig:
 
         with pytest.raises(ValueError, match="Invalid fit parameter"):
             Pipeline([("arena", ModelArena())]).fit(X, y, nope=1)
+
+    def test_arena_handle_imbalance_flag_reaches_trainers(self):
+        from mlkit.modelling import ModelArena
+
+        for flag in (True, False):
+            zoo = ModelArena(handle_imbalance=flag)._build_zoo("classification")
+            for name in ("Linear Model", "Random Forest", "LightGBM"):
+                assert zoo[name].handle_imbalance is flag
+
+    def test_unweighted_model_is_better_calibrated_on_majority_positive(self):
+        from mlkit.modelling import LGBMTrainer
+
+        n = 6000
+        X = pd.DataFrame({"x": rng.normal(size=n)})
+        y = (rng.uniform(size=n) < 1 / (1 + np.exp(-(1.2 * X["x"] + 1.0)))).astype(
+            int
+        )  # ~70% positive
+        tr, te = slice(0, 4500), slice(4500, n)
+        gap = {}
+        for flag in (True, False):
+            m = LGBMTrainer(n_estimators=60, handle_imbalance=flag).fit(X[tr], y[tr])
+            gap[flag] = abs(m.predict_proba(X[te])[:, 1].mean() - y[te].mean())
+        assert gap[False] < gap[True]
 
     def test_arena_unknown_candidate(self):
         from mlkit.modelling import ModelArena
@@ -171,7 +212,9 @@ class TestDriftBaseline:
     def _monitor(self):
         from mlkit.monitoring import DriftMonitor
 
-        base = pd.DataFrame({"num": rng.normal(size=2000), "cat": rng.choice(["A", "B", "C"], 2000)})
+        base = pd.DataFrame(
+            {"num": rng.normal(size=2000), "cat": rng.choice(["A", "B", "C"], 2000)}
+        )
         mon = DriftMonitor().fit(base)
         mon.fit_predictions(rng.uniform(size=2000))
         return mon, base
@@ -189,7 +232,9 @@ class TestDriftBaseline:
         from mlkit.monitoring import DriftMonitor
 
         mon, _ = self._monitor()
-        fresh = pd.DataFrame({"num": rng.normal(size=1000), "cat": rng.choice(["A", "B", "C"], 1000)})
+        fresh = pd.DataFrame(
+            {"num": rng.normal(size=1000), "cat": rng.choice(["A", "B", "C"], 1000)}
+        )
         report = DriftMonitor.from_dict(mon.to_dict()).monitor(fresh, y_pred=rng.uniform(size=1000))
         assert report.is_passed
 
@@ -224,7 +269,9 @@ class TestBundleIntegrity:
         pipe = Pipeline([("m", DummyTrainer(task_type="regression"))])
         X = pd.DataFrame({"x": [1.0, 2.0, 3.0]})
         pipe.fit(X, [1.0, 2.0, 3.0])
-        out = save_bundle(pipe, tmp_path / "b", cfg=TaskConfig(task_type="regression", target="y"), X_sample=X)
+        out = save_bundle(
+            pipe, tmp_path / "b", cfg=TaskConfig(task_type="regression", target="y"), X_sample=X
+        )
 
         manifest = json.loads((out / "manifest.json").read_text())
         assert set(manifest["files"]) >= {"pipeline.joblib", "config.yaml", "versions.json"}
@@ -303,7 +350,9 @@ class TestRunner:
         assert pipe.named_steps["arena"].cv == cfg.cv_folds
 
         with pytest.raises(ValidationError, match="last step"):
-            build_pipeline_from_config(TaskConfig(target="y", steps=[{"step": "preprocessing.imputer"}]))
+            build_pipeline_from_config(
+                TaskConfig(target="y", steps=[{"step": "preprocessing.imputer"}])
+            )
         with pytest.raises(ValidationError, match="Duplicate"):
             build_pipeline_from_config(
                 TaskConfig(target="y", steps=[{"name": "a", "step": "preprocessing.imputer"}] * 2)
@@ -357,7 +406,13 @@ modelling: {{candidates: [linear, lightgbm]}}
 class TestCLIEndToEnd:
     def test_bundle_contents(self, trained_bundle):
         d, bundle, _ = trained_bundle
-        for f in ("pipeline.joblib", "baseline.json", "metrics.json", "report.json", "manifest.json"):
+        for f in (
+            "pipeline.joblib",
+            "baseline.json",
+            "metrics.json",
+            "report.json",
+            "manifest.json",
+        ):
             assert (bundle / f).exists(), f
         metrics = json.loads((bundle / "metrics.json").read_text())
         assert metrics["split"] == "time"
@@ -434,3 +489,208 @@ def test_json_logging_carries_run_id():
     with run_context("abc123"):
         payload = json.loads(JsonFormatter().format(record))
     assert payload["run_id"] == "abc123" and payload["msg"] == "hello x"
+
+
+# ------------------------------------------------- Brier / ECE and metric thresholds
+class TestProbabilityMetrics:
+    def test_ece_known_values(self):
+        from mlkit.modelling import expected_calibration_error
+
+        y = np.array([1, 0] * 500)
+        assert expected_calibration_error(y, np.full(1000, 0.5)) == pytest.approx(0.0)
+        assert expected_calibration_error(y, np.full(1000, 0.9)) == pytest.approx(0.4)
+        assert expected_calibration_error(np.array([]), np.array([])) == 0.0
+        # probabilities exactly 0 / 1 / out of range must not index outside the bins
+        assert expected_calibration_error(np.array([0, 1]), np.array([0.0, 1.0])) == pytest.approx(
+            0.0
+        )
+        assert 0.0 <= expected_calibration_error(np.array([0, 1]), np.array([-0.2, 1.3])) <= 1.0
+
+    def test_well_calibrated_scores_have_low_ece(self):
+        from mlkit.modelling import expected_calibration_error
+
+        p = rng.uniform(size=20000)
+        y = (rng.uniform(size=20000) < p).astype(int)
+        assert expected_calibration_error(y, p) < 0.02
+        assert expected_calibration_error(y, np.clip(p - 0.2, 0, 1)) > 0.1
+
+    def test_compute_metrics_includes_brier_and_ece(self):
+        from sklearn.metrics import brier_score_loss
+
+        from mlkit.modelling import compute_metrics
+
+        y = np.array([0, 1, 1, 0, 1, 0, 1, 1])
+        p = np.array([0.2, 0.8, 0.6, 0.4, 0.9, 0.1, 0.7, 0.3])
+        m = compute_metrics(y, (p >= 0.5).astype(int), p)
+        assert m["brier"] == pytest.approx(brier_score_loss(y, p))
+        assert 0.0 <= m["ece"] <= 1.0
+        # two-column predict_proba output is accepted too
+        m2 = compute_metrics(y, (p >= 0.5).astype(int), np.column_stack([1 - p, p]))
+        assert m2["brier"] == pytest.approx(m["brier"])
+        # no probabilities, or non 0/1 labels, or regression -> not reported
+        assert "brier" not in compute_metrics(y, (p >= 0.5).astype(int))
+        assert "brier" not in compute_metrics(y + 1, (p >= 0.5).astype(int) + 1, p)
+        assert "brier" not in compute_metrics(p, p, task_type="regression")
+
+    def test_metric_directions(self):
+        from mlkit.modelling.evaluation import AVAILABLE_METRICS, LOWER_IS_BETTER
+
+        assert {"brier", "ece", "rmse", "mae"} <= LOWER_IS_BETTER
+        assert "roc_auc" not in LOWER_IS_BETTER and "r2" not in LOWER_IS_BETTER
+        assert (
+            AVAILABLE_METRICS["classification"] | AVAILABLE_METRICS["regression"] >= LOWER_IS_BETTER
+        )
+
+
+def _threshold_cfg(thresholds: dict[str, float]) -> TaskConfig:
+    return TaskConfig(
+        task_type="classification",
+        target="label",
+        time_col="when",
+        cv_folds=3,
+        metric_thresholds=thresholds,
+        steps=[
+            {"name": "dt", "step": "features.datetime"},
+            {"name": "types", "step": "preprocessing.type_caster"},
+            {"name": "imp", "step": "preprocessing.imputer"},
+            {"name": "enc", "step": "preprocessing.categorical_encoder"},
+            {"name": "arena", "step": "modelling.arena", "params": {"candidates": ["linear"]}},
+        ],
+    )
+
+
+class TestMetricThresholdGate:
+    def test_unknown_metric_rejected_before_training(self):
+        from mlkit.runner import train
+
+        df = _binary_frame()
+        with pytest.raises(ValidationError, match=r"Unknown metric.*\['roc_auc_typo'\]"):
+            train(_threshold_cfg({"roc_auc_typo": 0.9}), df)
+        with pytest.raises(
+            ValidationError, match="Unknown metric"
+        ):  # classification metric on regression
+            train(
+                TaskConfig(task_type="regression", target="x1", metric_thresholds={"roc_auc": 0.7}),
+                df,
+            )
+
+    def test_directions_and_failure_messages(self):
+        from mlkit.runner import train
+
+        df = _binary_frame()
+        ok = train(_threshold_cfg({"roc_auc": 0.6, "brier": 0.4, "ece": 0.3}), df)
+        assert ok.metrics["thresholds_passed"] is True and ok.metrics["threshold_failures"] == []
+        assert {"brier", "ece"} <= set(ok.metrics["holdout"])
+
+        bad = train(_threshold_cfg({"brier": 0.0001, "ece": 0.0001, "roc_auc": 0.6}), df)
+        assert bad.metrics["thresholds_passed"] is False
+        failed = " ".join(bad.metrics["threshold_failures"])
+        assert "brier" in failed and "ece" in failed and "must be <=" in failed
+        assert "roc_auc" not in failed  # the satisfied lower-bound threshold is not reported
+
+        too_strict = train(_threshold_cfg({"roc_auc": 0.99999}), df)
+        assert "must be >=" in too_strict.metrics["threshold_failures"][0]
+
+    def test_cli_exit_code_on_failed_gate(self, tmp_path):
+        from mlkit.cli import cmd_run
+
+        df = _binary_frame()
+        data = tmp_path / "d.csv"
+        df.to_csv(data, index=False)
+        cfg = _threshold_cfg({"ece": 0.0001})
+        cfg_file = tmp_path / "t.yaml"
+        cfg.model_copy(update={"data_path": str(data)}).to_yaml(cfg_file)
+        assert cmd_run(str(cfg_file), output_dir=str(tmp_path / "b")) == 1
+        saved = json.loads((tmp_path / "b" / "metrics.json").read_text(encoding="utf-8"))
+        assert saved["thresholds_passed"] is False and saved["threshold_failures"]
+
+
+# --------------------------------------------------------- trainer params / clone
+class TestTrainerParams:
+    @pytest.mark.parametrize(
+        "cls, extra",
+        [
+            ("LGBMTrainer", {"min_child_samples": 77, "reg_lambda": 3.0}),
+            ("RandomForestTrainer", {"min_samples_leaf": 5, "max_features": "log2"}),
+            ("LinearTrainer", {"tol": 1e-3}),
+        ],
+    )
+    def test_clone_preserves_extra_kwargs(self, cls, extra):
+        """CV and Optuna clone estimators: extra kwargs must survive (regression for v0.2 bug)."""
+        from sklearn.base import clone
+
+        import mlkit.modelling as m
+
+        est = getattr(m, cls)(**extra)
+        cloned = clone(est)
+        assert cloned.kwargs == extra
+        assert {k: cloned.get_params()[k] for k in extra} == extra
+
+    def test_extra_kwargs_reach_library_estimator_after_clone(self):
+        from sklearn.base import clone
+
+        from mlkit.modelling import LGBMTrainer
+
+        X = pd.DataFrame({"x": rng.normal(size=200)})
+        y = (X["x"] > 0).astype(int)
+        fitted = clone(LGBMTrainer(n_estimators=5, min_child_samples=33)).fit(X, y)
+        assert fitted._estimator.get_params()["min_child_samples"] == 33
+
+    def test_set_params_routes_explicit_and_extra(self):
+        from mlkit.modelling import LGBMTrainer
+
+        est = LGBMTrainer().set_params(learning_rate=0.2, subsample=0.7)
+        assert est.learning_rate == 0.2 and est.kwargs == {"subsample": 0.7}
+
+    def test_wrapper_without_kwargs_rejects_unknown_params(self):
+        from mlkit.modelling import DummyTrainer
+
+        with pytest.raises(ValueError):
+            DummyTrainer().set_params(nope=1)
+
+    def test_unified_predict_proba_and_importances(self):
+        from sklearn.linear_model import LinearRegression
+
+        from mlkit.core.errors import NotFittedError
+        from mlkit.modelling import DummyTrainer, LinearTrainer, SklearnModelWrapper
+
+        X = pd.DataFrame({"a": rng.normal(size=60), "b": rng.normal(size=60)})
+        y = (X["a"] > 0).astype(int)
+        with pytest.raises(NotFittedError, match="LinearTrainer"):
+            LinearTrainer().predict(X)
+        assert len(DummyTrainer().fit(X, y).feature_importances_) == 2
+        reg = LinearTrainer(task_type="regression").fit(X, X["a"])
+        with pytest.raises(AttributeError):
+            reg.predict_proba(X)
+        wrapped = SklearnModelWrapper(LinearRegression()).fit(X, X["a"])
+        assert len(wrapped.feature_importances_) == 2
+        with pytest.raises(AttributeError):
+            wrapped.predict_proba(X)
+
+
+def test_optuna_refit_uses_full_param_dict_including_constants():
+    pytest.importorskip("optuna")
+    from mlkit.modelling import LGBM_SPACE, LGBMTrainer, OptunaSearch
+
+    X = pd.DataFrame({"x": rng.normal(size=300), "z": rng.normal(size=300)})
+    y = (X["x"] + rng.normal(scale=0.5, size=300) > 0).astype(int)
+    search = OptunaSearch(estimator_cls=LGBMTrainer, space=LGBM_SPACE, n_trials=2, cv=2)
+    search.fit(X, y, cfg=TaskConfig(target="y"))
+    assert search.best_params_["subsample_freq"] == 1
+    assert search.best_estimator_.kwargs["subsample_freq"] == 1
+    assert (
+        search.best_estimator_._estimator.get_params()["min_child_samples"]
+        == search.best_params_["min_child_samples"]
+    )
+
+
+def test_drift_monitor_exclude_survives_serialisation():
+    from mlkit.monitoring import DriftMonitor
+
+    base = pd.DataFrame({"keep": rng.normal(size=500), "grows": np.arange(500.0), "c": ["a"] * 500})
+    mon = DriftMonitor(exclude=["grows", "c"]).fit(base)
+    assert set(mon.numeric_baselines_) == {"keep"} and mon.categorical_baselines_ == {}
+    restored = DriftMonitor.from_dict(json.loads(json.dumps(mon.to_dict())))
+    later = base.assign(grows=base["grows"] + 10_000)
+    report = restored.monitor(later)
+    assert report.is_passed and not any("grows" in i.name for i in report.items)

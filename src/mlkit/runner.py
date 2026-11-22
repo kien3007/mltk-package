@@ -31,6 +31,7 @@ from mlkit.core.registry import get_step, list_steps
 from mlkit.core.report import Report
 from mlkit.features import DatetimeFeatures
 from mlkit.modelling import ModelArena, compute_bootstrap_ci, compute_metrics
+from mlkit.modelling.evaluation import AVAILABLE_METRICS, LOWER_IS_BETTER
 from mlkit.monitoring import DriftMonitor
 from mlkit.preprocessing import (
     CategoricalEncoder,
@@ -67,7 +68,9 @@ def read_table(path: str | Path) -> pd.DataFrame:
             return pd.read_json(p, lines=True)
         except ValueError:
             return pd.read_json(p)
-    raise ValueError(f"Unsupported data format '{suffix}'. Supported: {sorted(SUPPORTED_DATA_SUFFIXES)}")
+    raise ValueError(
+        f"Unsupported data format '{suffix}'. Supported: {sorted(SUPPORTED_DATA_SUFFIXES)}"
+    )
 
 
 def write_table(df: pd.DataFrame, path: str | Path) -> Path:
@@ -109,6 +112,9 @@ def build_default_pipeline(cfg: TaskConfig) -> Pipeline:
                 enforce_baseline_gate=cfg.baseline_gate,
                 random_state=cfg.seed,
                 candidates=modelling.get("candidates"),
+                handle_imbalance=bool(modelling.get("handle_imbalance", True)),
+                calibration=modelling.get("calibration"),
+                threshold=modelling.get("threshold", 0.5),
             ),
         ),
     ]
@@ -134,7 +140,9 @@ def build_pipeline_from_config(cfg: TaskConfig) -> Pipeline:
     seen: set[str] = set()
     for i, spec in enumerate(cfg.steps):
         if "step" not in spec:
-            raise ValidationError(f"steps[{i}] is missing the 'step' key. Available: {list_steps()}")
+            raise ValidationError(
+                f"steps[{i}] is missing the 'step' key. Available: {list_steps()}"
+            )
         name = str(spec.get("name") or spec["step"].split(".")[-1])
         if name in seen:
             raise ValidationError(f"Duplicate step name '{name}' in steps[{i}].")
@@ -159,11 +167,15 @@ def prepare_target(y: pd.Series, cfg: TaskConfig) -> tuple[pd.Series, dict[str, 
     if cfg.task_type == "regression":
         y_num = pd.to_numeric(y, errors="coerce")
         if y_num.isna().any():
-            raise ValidationError(f"Regression target '{cfg.target}' has non-numeric or missing values.")
+            raise ValidationError(
+                f"Regression target '{cfg.target}' has non-numeric or missing values."
+            )
         return y_num.astype(float), info
 
     if y.isna().any():
-        raise ValidationError(f"Target '{cfg.target}' contains {int(y.isna().sum())} missing values.")
+        raise ValidationError(
+            f"Target '{cfg.target}' contains {int(y.isna().sum())} missing values."
+        )
     if pd.api.types.is_numeric_dtype(y):
         info["classes"] = sorted(pd.unique(y).tolist())
         return y, info
@@ -193,7 +205,9 @@ class Split:
     fit_params: dict[str, Any] = field(default_factory=dict)
 
 
-def split_data(X: pd.DataFrame, y: pd.Series, cfg: TaskConfig, arena_step: str | None = None) -> Split:
+def split_data(
+    X: pd.DataFrame, y: pd.Series, cfg: TaskConfig, arena_step: str | None = None
+) -> Split:
     """Train/test split respecting ``time_col`` (chronological holdout) and ``group_col``."""
     fit_params: dict[str, Any] = {}
 
@@ -206,7 +220,12 @@ def split_data(X: pd.DataFrame, y: pd.Series, cfg: TaskConfig, arena_step: str |
         order = np.argsort(t.to_numpy(), kind="stable")
         Xs, ys = X.iloc[order], y.iloc[order]
         cut = int(round(len(Xs) * (1 - cfg.test_size)))
-        X_train, X_test, y_train, y_test = Xs.iloc[:cut], Xs.iloc[cut:], ys.iloc[:cut], ys.iloc[cut:]
+        X_train, X_test, y_train, y_test = (
+            Xs.iloc[:cut],
+            Xs.iloc[cut:],
+            ys.iloc[:cut],
+            ys.iloc[cut:],
+        )
         if arena_step:
             fit_params[f"{arena_step}__time_index"] = t.iloc[order].iloc[:cut].to_numpy()
         strategy = "time"
@@ -229,7 +248,36 @@ def split_data(X: pd.DataFrame, y: pd.Series, cfg: TaskConfig, arena_step: str |
     return Split(X_train, X_test, y_train, y_test, strategy, fit_params)
 
 
-def _scores(pipeline: Pipeline, X: pd.DataFrame, task_type: str) -> tuple[np.ndarray, np.ndarray | None]:
+def _threshold_failures(cfg: TaskConfig, values: dict[str, Any]) -> list[str]:
+    """Human-readable list of ``metric_thresholds`` violated by ``values``."""
+    failures = []
+    for metric, threshold in cfg.metric_thresholds.items():
+        value = values.get(metric)
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            failures.append(f"{metric} could not be computed")
+            continue
+        if metric in LOWER_IS_BETTER:
+            if value > threshold:
+                failures.append(f"{metric}={value:.4f} (must be <= {threshold})")
+        elif value < threshold:
+            failures.append(f"{metric}={value:.4f} (must be >= {threshold})")
+    return failures
+
+
+def validate_metric_thresholds(cfg: TaskConfig) -> None:
+    """Fail fast on unknown metric names so a typo cannot silently disable the release gate."""
+    allowed = AVAILABLE_METRICS[cfg.task_type]
+    unknown = sorted(set(cfg.metric_thresholds) - allowed)
+    if unknown:
+        raise ValidationError(
+            f"Unknown metric(s) in metric_thresholds for {cfg.task_type}: {unknown}. "
+            f"Available: {sorted(allowed)}"
+        )
+
+
+def _scores(
+    pipeline: Pipeline, X: pd.DataFrame, task_type: str
+) -> tuple[np.ndarray, np.ndarray | None]:
     preds = np.asarray(pipeline.predict(X))
     probs = None
     if task_type == "classification":
@@ -266,7 +314,10 @@ def train(
 ) -> TrainResult:
     """Train, evaluate on a holdout, capture drift baselines and (optionally) save a bundle."""
     if cfg.target not in df.columns:
-        raise ValidationError(f"Target column '{cfg.target}' not found in dataset columns: {list(df.columns)}")
+        raise ValidationError(
+            f"Target column '{cfg.target}' not found in dataset columns: {list(df.columns)}"
+        )
+    validate_metric_thresholds(cfg)
 
     X = df.drop(columns=[cfg.target])
     y, target_info = prepare_target(df[cfg.target], cfg)
@@ -288,6 +339,9 @@ def train(
     arena = pipeline.named_steps.get(arena_name) if arena_name else None
     if arena is not None:
         metrics["champion"] = arena.best_model_name_
+        metrics["cv_scope"] = arena.cv_scope_
+        metrics["calibration"] = arena.calibration_
+        metrics["decision_threshold"] = arena.decision_threshold_
         metrics["cv"] = {
             k: v
             for k, v in arena.cv_results_.get(arena.best_model_name_, {}).items()
@@ -297,32 +351,34 @@ def train(
         logger.info("Champion model: %s", arena.best_model_name_)
 
     preds, probs = _scores(pipeline, split.X_test, cfg.task_type)
-    metrics["holdout"] = compute_metrics(np.asarray(split.y_test), preds, probs, task_type=cfg.task_type)
+    metrics["holdout"] = compute_metrics(
+        np.asarray(split.y_test), preds, probs, task_type=cfg.task_type
+    )
     metrics["holdout_ci"] = compute_bootstrap_ci(
         np.asarray(split.y_test), preds, probs, task_type=cfg.task_type, random_state=cfg.seed
     )
-    logger.info("Holdout metrics: %s", json.dumps({k: round(v, 4) for k, v in metrics["holdout"].items()}))
+    logger.info(
+        "Holdout metrics: %s", json.dumps({k: round(v, 4) for k, v in metrics["holdout"].items()})
+    )
 
     # Thresholds from config act as a release gate on the holdout set
-    failures = []
-    for metric, threshold in cfg.metric_thresholds.items():
-        value = metrics["holdout"].get(metric)
-        if value is None:
-            continue
-        lower_is_better = metric in {"rmse", "mae"}
-        if (lower_is_better and value > threshold) or (not lower_is_better and value < threshold):
-            failures.append(f"{metric}={value:.4f} (threshold {threshold})")
+    failures = _threshold_failures(cfg, metrics["holdout"])
     metrics["thresholds_passed"] = not failures
+    metrics["threshold_failures"] = failures
     if failures:
         logger.warning("Metric thresholds not met: %s", "; ".join(failures))
 
     monitor = DriftMonitor(**cfg.monitoring)
     # Identifier / time / group keys are expected to change between batches: not drift features.
-    key_cols = [c for c in (cfg.id_col, cfg.time_col, cfg.group_col) if c and c in split.X_train.columns]
+    key_cols = [
+        c for c in (cfg.id_col, cfg.time_col, cfg.group_col) if c and c in split.X_train.columns
+    ]
     monitor.fit(split.X_train.drop(columns=key_cols), split.y_train, cfg=cfg)
     train_scores = model_output(pipeline, split.X_train, cfg.task_type)
     monitor.fit_predictions(train_scores)
-    drift_report = monitor.monitor(split.X_test, y_pred=model_output(pipeline, split.X_test, cfg.task_type))
+    drift_report = monitor.monitor(
+        split.X_test, y_pred=model_output(pipeline, split.X_test, cfg.task_type)
+    )
 
     result = TrainResult(pipeline, cfg, metrics, monitor, drift_report)
 
@@ -376,9 +432,15 @@ def predict_frame(
     cfg: TaskConfig,
     metadata: dict[str, Any],
     df: pd.DataFrame,
-    threshold: float = 0.5,
+    threshold: float | None = None,
 ) -> pd.DataFrame:
-    """Score a DataFrame with a loaded bundle and return a predictions frame."""
+    """Score a DataFrame with a loaded bundle and return a predictions frame.
+
+    ``threshold=None`` uses the decision threshold stored in the bundle (tuned or configured
+    at training time, default 0.5).
+    """
+    if threshold is None:
+        threshold = float(metadata.get("metrics", {}).get("decision_threshold") or 0.5)
     X = df.drop(columns=[cfg.target], errors="ignore")
     X = validate_input(X, metadata.get("schema", {}))
 
@@ -403,7 +465,9 @@ def predict_frame(
     return out.reset_index(drop=True)
 
 
-def predict_bundle(bundle_path: str | Path, df: pd.DataFrame, threshold: float = 0.5) -> pd.DataFrame:
+def predict_bundle(
+    bundle_path: str | Path, df: pd.DataFrame, threshold: float | None = None
+) -> pd.DataFrame:
     pipeline, cfg, metadata = load_bundle(bundle_path)
     return predict_frame(pipeline, cfg, metadata, df, threshold=threshold)
 
@@ -425,3 +489,109 @@ def monitor_bundle(bundle_path: str | Path, df: pd.DataFrame) -> Report:
     except ValidationError as exc:
         logger.warning("Skipping prediction drift: %s", exc)
     return monitor.monitor(X, y_pred=y_pred)
+
+
+# --------------------------------------------------------------------- evaluate
+@dataclass
+class EvaluationResult:
+    overall: dict[str, Any]
+    by_group: pd.DataFrame | None
+    failures: list[str]
+    reference: dict[str, float]
+
+    @property
+    def passed(self) -> bool:
+        return not self.failures
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "overall": self.overall,
+            "by_group": None if self.by_group is None else self.by_group.to_dict(orient="records"),
+            "failures": self.failures,
+            "reference_holdout": self.reference,
+            "passed": self.passed,
+        }
+
+
+def encode_target_like_training(
+    y: pd.Series, cfg: TaskConfig, metadata: dict[str, Any]
+) -> np.ndarray:
+    """Encode labels exactly as during training (stored ``label_map``), never re-deriving it."""
+    if cfg.task_type == "regression":
+        return pd.to_numeric(y, errors="raise").to_numpy(dtype=float)
+    label_map = (metadata.get("metrics", {}).get("target") or {}).get("label_map")
+    if not label_map:
+        return y.to_numpy()
+    cleaned = y.astype(str).str.strip().str.rstrip(".")
+    unknown = sorted(set(cleaned) - set(label_map))
+    if unknown:
+        raise ValidationError(f"Labels not seen at training time: {unknown[:10]}")
+    return cleaned.map(label_map).to_numpy(dtype=int)
+
+
+def _labelled_metrics(
+    y: np.ndarray, pred: np.ndarray, score: np.ndarray | None, task_type: str
+) -> dict[str, Any]:
+    probs = None if score is None else np.column_stack([1 - score, score])
+    m: dict[str, Any] = {"n": int(len(y))}
+    if task_type == "classification":
+        m["positive_rate"] = float(np.mean(y))
+        if score is not None:
+            m["mean_score"] = float(np.mean(score))
+    m.update(compute_metrics(y, pred, probs, task_type=task_type))  # type: ignore[arg-type]
+    if task_type == "classification" and len(np.unique(y)) < 2:
+        m["roc_auc"] = float("nan")  # undefined on a single-class batch (not 0.5)
+    return m
+
+
+def evaluate_frame(
+    pipeline: Pipeline,
+    cfg: TaskConfig,
+    metadata: dict[str, Any],
+    df: pd.DataFrame,
+    by: str | None = None,
+    threshold: float | None = None,
+) -> EvaluationResult:
+    """Score labelled data and compute metrics overall and per ``by`` group (e.g. cutoff/week).
+
+    Each group (and the overall set) is checked against ``cfg.metric_thresholds``.
+    """
+    if cfg.target not in df.columns:
+        raise ValidationError(f"Evaluation data needs the target column '{cfg.target}'.")
+    if by is not None and by not in df.columns:
+        raise ValidationError(f"Group column '{by}' not found in evaluation data.")
+
+    y = encode_target_like_training(df[cfg.target], cfg, metadata)
+    preds = predict_frame(pipeline, cfg, metadata, df, threshold=threshold)
+    pred = preds["prediction"].to_numpy()
+    score = preds["score"].to_numpy() if "score" in preds.columns else None
+
+    overall = _labelled_metrics(y, pred, score, cfg.task_type)
+    failures = [f"overall: {f}" for f in _threshold_failures(cfg, overall)]
+
+    by_group = None
+    if by is not None:
+        rows = []
+        keys = df[by].to_numpy()
+        for key in pd.unique(keys):
+            mask = keys == key
+            m = _labelled_metrics(
+                y[mask], pred[mask], None if score is None else score[mask], cfg.task_type
+            )
+            rows.append({by: key, **m})
+            failures += [f"{by}={key}: {f}" for f in _threshold_failures(cfg, m)]
+        by_group = pd.DataFrame(rows).sort_values(by).reset_index(drop=True)
+
+    reference = {
+        k: v
+        for k, v in (metadata.get("metrics", {}).get("holdout") or {}).items()
+        if isinstance(v, (int, float))
+    }
+    return EvaluationResult(overall, by_group, failures, reference)
+
+
+def evaluate_bundle(
+    bundle_path: str | Path, df: pd.DataFrame, by: str | None = None, threshold: float | None = None
+) -> EvaluationResult:
+    pipeline, cfg, metadata = load_bundle(bundle_path)
+    return evaluate_frame(pipeline, cfg, metadata, df, by=by, threshold=threshold)

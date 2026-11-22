@@ -47,6 +47,7 @@ y_reg = pd.Series(rng.uniform(100_000, 800_000, size=N))
 # mlkit.viz tests
 # ===========================================================================
 
+
 class TestVizMissingRates:
     def test_returns_figure(self):
         import matplotlib.pyplot as plt
@@ -106,10 +107,12 @@ class TestVizArenaComparison:
 
         from mlkit.viz import plot_arena_comparison
 
-        df = pd.DataFrame({
-            "Model": ["Baseline (Dummy)", "Linear Model", "LightGBM"],
-            "Score": [0.5, 0.72, 0.85],
-        })
+        df = pd.DataFrame(
+            {
+                "Model": ["Baseline (Dummy)", "Linear Model", "LightGBM"],
+                "Score": [0.5, 0.72, 0.85],
+            }
+        )
         fig = plot_arena_comparison(df)
         assert hasattr(fig, "savefig")
         plt.close(fig)
@@ -221,6 +224,7 @@ class TestVizRocCurve:
 # ===========================================================================
 # mlkit.modelling.tuning tests
 # ===========================================================================
+
 
 class TestOptunaSearch:
     def test_basic_classification(self):

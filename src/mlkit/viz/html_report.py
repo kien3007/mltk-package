@@ -69,7 +69,9 @@ def generate_html_report(
 
     overall_status = "error" if total_error > 0 else ("warn" if total_warn > 0 else "ok")
     status_color = {"ok": "#10b981", "warn": "#f59e0b", "error": "#ef4444"}[overall_status]
-    status_label = {"ok": "PASSED", "warn": "WARNINGS DETECTED", "error": "FAILED / BLOCKED"}[overall_status]
+    status_label = {"ok": "PASSED", "warn": "WARNINGS DETECTED", "error": "FAILED / BLOCKED"}[
+        overall_status
+    ]
 
     # Categorize embedded figures into tabs
     tab_figures: dict[str, list[str]] = {
@@ -168,7 +170,7 @@ def generate_html_report(
                     </tr>
                 </thead>
                 <tbody>
-                    {''.join(rows)}
+                    {"".join(rows)}
                 </tbody>
             </table>
         </div>
@@ -391,48 +393,48 @@ def generate_html_report(
         </header>
 
         <div class="kpi-grid">
-            {''.join(kpi_cards)}
+            {"".join(kpi_cards)}
         </div>
 
         <!-- Interactive Tab Navigation -->
         <nav class="tab-nav">
-            <button class="tab-btn active" onclick="openTab('tab-all')">🖼️ All Visualizations ({len(tab_figures['tab-all'])})</button>
-            <button class="tab-btn" onclick="openTab('tab-eda')">🔍 Data Quality &amp; EDA ({len(tab_figures['tab-eda'])})</button>
-            <button class="tab-btn" onclick="openTab('tab-arena')">⚔️ Model Arena ({len(tab_figures['tab-arena'])})</button>
-            <button class="tab-btn" onclick="openTab('tab-business')">🎯 Business &amp; Decision Curves ({len(tab_figures['tab-business'])})</button>
-            <button class="tab-btn" onclick="openTab('tab-xai')">🧠 Explainability &amp; SHAP ({len(tab_figures['tab-xai'])})</button>
-            <button class="tab-btn" onclick="openTab('tab-drift')">📡 Drift &amp; Stability ({len(tab_figures['tab-drift'])})</button>
+            <button class="tab-btn active" onclick="openTab('tab-all')">🖼️ All Visualizations ({len(tab_figures["tab-all"])})</button>
+            <button class="tab-btn" onclick="openTab('tab-eda')">🔍 Data Quality &amp; EDA ({len(tab_figures["tab-eda"])})</button>
+            <button class="tab-btn" onclick="openTab('tab-arena')">⚔️ Model Arena ({len(tab_figures["tab-arena"])})</button>
+            <button class="tab-btn" onclick="openTab('tab-business')">🎯 Business &amp; Decision Curves ({len(tab_figures["tab-business"])})</button>
+            <button class="tab-btn" onclick="openTab('tab-xai')">🧠 Explainability &amp; SHAP ({len(tab_figures["tab-xai"])})</button>
+            <button class="tab-btn" onclick="openTab('tab-drift')">📡 Drift &amp; Stability ({len(tab_figures["tab-drift"])})</button>
             <button class="tab-btn" onclick="openTab('tab-audit')">📋 Gatekeeper Audit Log</button>
         </nav>
 
         <!-- Tab Contents -->
         <div id="tab-all" class="tab-content active">
-            {_render_tab_grid(tab_figures['tab-all'], "No charts provided.")}
+            {_render_tab_grid(tab_figures["tab-all"], "No charts provided.")}
         </div>
 
         <div id="tab-eda" class="tab-content">
-            {_render_tab_grid(tab_figures['tab-eda'], "No EDA charts in this run.")}
+            {_render_tab_grid(tab_figures["tab-eda"], "No EDA charts in this run.")}
         </div>
 
         <div id="tab-arena" class="tab-content">
-            {_render_tab_grid(tab_figures['tab-arena'], "No Model Arena charts in this run.")}
+            {_render_tab_grid(tab_figures["tab-arena"], "No Model Arena charts in this run.")}
         </div>
 
         <div id="tab-business" class="tab-content">
-            {_render_tab_grid(tab_figures['tab-business'], "No Business Decision curves generated.")}
+            {_render_tab_grid(tab_figures["tab-business"], "No Business Decision curves generated.")}
         </div>
 
         <div id="tab-xai" class="tab-content">
-            {_render_tab_grid(tab_figures['tab-xai'], "No Explainability / SHAP charts generated.")}
+            {_render_tab_grid(tab_figures["tab-xai"], "No Explainability / SHAP charts generated.")}
         </div>
 
         <div id="tab-drift" class="tab-content">
-            {_render_tab_grid(tab_figures['tab-drift'], "No Drift Monitoring charts generated.")}
+            {_render_tab_grid(tab_figures["tab-drift"], "No Drift Monitoring charts generated.")}
         </div>
 
         <div id="tab-audit" class="tab-content">
             <section class="section">
-                {''.join(reports_html)}
+                {"".join(reports_html)}
             </section>
         </div>
 

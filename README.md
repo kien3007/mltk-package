@@ -64,6 +64,9 @@ mlkit predict ./artifacts/adult new_data.csv --out preds.csv --threshold 0.5
 # Giám sát drift so với baseline đã lưu trong bundle
 mlkit monitor ./artifacts/adult new_data.csv --out drift.html --fail-on warn
 
+# Đo hiệu năng trên dữ liệu đã có nhãn, tổng thể và theo từng nhóm (backtest hoặc giám sát khi nhãn về)
+mlkit evaluate ./artifacts/adult labelled.csv --by week --out backtest.json
+
 # Phục vụ model qua REST API (cần extra `serve`)
 mlkit serve ./artifacts/adult --port 8000
 
@@ -90,14 +93,20 @@ quality_gate: true
 baseline_gate: true
 data_path: examples/data/adult.csv
 
-metric_thresholds:               # cổng phát hành trên tập holdout
-  roc_auc: 0.85
+metric_thresholds:               # cổng phát hành trên tập holdout (xem bảng bên dưới)
+  roc_auc: 0.85                  # >= ngưỡng
+  brier: 0.19                    # <= ngưỡng
+  ece: 0.02                      # <= ngưỡng
 modelling:
   candidates: [linear, random_forest, lightgbm, xgboost]
   positive_label: ">50K"
+  handle_imbalance: false        # true: class weight (lệch xác suất); false: xác suất dùng được trực tiếp
+  calibration: auto              # null | sigmoid | isotonic | auto: chỉ giữ khi Brier CV giảm
+  threshold: f1                  # 0.5 (mặc định) | số trong (0,1) | f1 | youden (tối ưu trên OOF)
 monitoring:                      # tham số của DriftMonitor
   psi_threshold_warn: 0.1
   psi_threshold_error: 0.2
+  exclude: [tenure_days]         # bỏ đặc trưng tăng theo thời gian khỏi giám sát drift
 tracking:
   mlflow: true
   experiment: adult-income
@@ -111,6 +120,45 @@ steps:
   - {name: encoder, step: preprocessing.categorical_encoder}
   - {name: arena, step: modelling.arena, params: {candidates: [linear, lightgbm]}}
 ```
+
+### Cross-validation ở mức toàn pipeline (ADR-006)
+
+Mặc định, trong mỗi fold CV, mọi bước trước mô hình (encoder, scaler, bộ chọn đặc trưng...) được fit lại chỉ trên
+phần train của fold. Nhờ đó điểm CV, việc chọn mô hình, hiệu chuẩn và ngưỡng quyết định đều không bị rò rỉ
+nhãn validation. Ví dụ: với target ngẫu nhiên, AUC CV là 0,49 so với 0,69 khi chỉ CV ở mức mô hình.
+Dùng `Pipeline(steps, cv_scope="model")` nếu cần tốc độ thay vì độ chính xác của CV.
+
+### Đặc trưng theo mốc thời gian (propensity / churn / repurchase)
+
+```python
+from mlkit.features import TemporalSpec, build_panel, build_features
+
+spec = TemporalSpec(entity_col="customer_id", time_col="day", windows=(7, 28, 90),
+                    sum_cols=("amount",), nunique_cols=("basket_id",))
+panel = build_panel(events, cutoffs=range(120, 700, 7), horizon=7, spec=spec)  # train: nhiều cutoff
+X_now = build_features(events, as_of=711, spec=spec)                           # chấm điểm: một mốc
+```
+
+Chỉ các sự kiện có `time <= as_of` được đọc (có test bảo đảm). Nhãn là có hay không sự kiện trong `(as_of, as_of + horizon]`.
+Cutoff nào có cửa sổ nhãn vượt quá dữ liệu sẽ bị từ chối, để tránh âm tính giả. Train và chấm điểm dùng chung một hàm.
+Xem `examples/dunnhumby_propensity.py`.
+
+### Cổng phát hành `metric_thresholds`
+
+Mỗi ngưỡng được so với metric trên tập holdout. Tên metric không hợp lệ sẽ bị từ chối **trước khi train**
+(`ValidationError`), nên gõ sai tên không làm cổng bị bỏ qua âm thầm. Khi không đạt, `mlkit run` thoát với mã `1`,
+nhưng bundle vẫn được ghi, kèm `thresholds_passed: false` và `threshold_failures` trong `metrics.json`.
+
+| Loại bài toán | Metric | Điều kiện đạt |
+|---|---|---|
+| classification | `roc_auc`, `accuracy`, `precision`, `recall`, `f1` | giá trị >= ngưỡng |
+| classification | `brier`, `ece` (chất lượng xác suất; nhãn nhị phân 0/1) | giá trị <= ngưỡng |
+| regression | `r2` | giá trị >= ngưỡng |
+| regression | `rmse`, `mae` | giá trị <= ngưỡng |
+
+`ece` là Expected Calibration Error (10 bin đều); 0 nghĩa là xác suất khớp hoàn toàn với tần suất thực.
+Nếu cần dùng điểm số như xác suất, đặt `modelling.handle_imbalance: false`: class weight làm lệch xác suất
+(ví dụ dunnhumby 7 ngày: ECE 0,042 với class weight so với 0,010 khi tắt).
 
 ### Nội dung bundle
 
