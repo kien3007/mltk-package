@@ -16,6 +16,8 @@
   - EDA chưa bỏ qua cột bị đánh dấu `ignore`.
 
 ### Tính năng
+- `docs/HUONG_DAN_SU_DUNG.md`: tra cứu hàm/class theo từng công đoạn (16 phần, mỗi phần có bảng và ví dụ). Mọi ví dụ
+  được chạy tự động (`pytest -m docs`, trong CI).
 - `apply_coercion`: một nguồn sự thật cho việc chuyển kiểu, dùng chung bởi profile, TypeCaster, EDA và QC.
 - Không crash ở mức từng cột: kiểu `unsupported` / `ignored`; xử lý lỗi theo từng cột, từng cặp, từng panel.
 - `TaskConfig.column_types`, `ProfileOptions(overrides=...)`, `mlkit eda --type col=kiểu` (kể cả các dạng
