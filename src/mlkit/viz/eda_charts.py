@@ -151,9 +151,15 @@ def _plot_one(ax: plt.Axes, s: pd.Series, sem: str, name: str) -> None:
         clipped = nn.clip(lo, hi)
         arr = nn.to_numpy(dtype=float)
         log = bool(arr.min() > 0 and pd.Series(arr).skew() > 2 and hi / max(lo, 1e-12) > 100)
+        values = np.log10(clipped) if log else clipped
+        offset = ""
+        if not log and np.isfinite(lo) and abs(lo) > 1e12 * max(hi - lo, 1e-300):
+            # huge magnitude, tiny range (e.g. 64-bit ids): float bins collapse -> plot offsets
+            values, offset = clipped - lo, f"  (minus {lo:.6g})"
+            title += offset
         ax.hist(
-            np.log10(clipped) if log else clipped,
-            bins=30,
+            values,
+            bins=int(min(30, max(1, pd.Series(values).nunique()))),
             color=SERIES,
             edgecolor=SURFACE,
             linewidth=1,
@@ -205,9 +211,14 @@ def plot_distributions(
     nrows = int(np.ceil(len(cols) / ncols))
     fig, axes = _figure(13, 2.9 * nrows, nrows, ncols, squeeze=False)
     for ax, c in zip(axes.ravel(), cols, strict=False):
-        _plot_one(
-            ax, analysed[c], profile.columns[c].semantic_type if c in profile.columns else "", c
-        )
+        try:
+            _plot_one(
+                ax, analysed[c], profile.columns[c].semantic_type if c in profile.columns else "", c
+            )
+        except Exception as exc:  # noqa: BLE001 - one odd column must not break the figure
+            ax.clear()
+            _empty(ax, f"could not draw: {type(exc).__name__}")
+            _style(ax, _short(c, 28), grid_axis="")
     for ax in axes.ravel()[len(cols) :]:
         ax.axis("off")
     fig.tight_layout()

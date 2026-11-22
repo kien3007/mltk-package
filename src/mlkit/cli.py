@@ -201,13 +201,20 @@ def cmd_eda(
     out_path: str | None = None,
     profile_json: str | None = None,
     sample_rows: int | None = 200_000,
+    column_types: dict[str, str] | None = None,
 ) -> int:
     """Profile + QC + EDA of a data file; writes a standalone HTML report."""
     from mlkit.qc_eda import run_eda
 
     try:
         df = read_table(data_path)
-        report = run_eda(df, target=target, task_type=task_type, sample_rows=sample_rows)
+        report = run_eda(
+            df,
+            target=target,
+            task_type=task_type,
+            sample_rows=sample_rows,
+            column_types=column_types,
+        )
     except (MLKitError, FileNotFoundError, ValueError, KeyError) as exc:
         logger.error("%s: %s", type(exc).__name__, exc)
         return 1
@@ -229,15 +236,18 @@ def cmd_eda(
 
 
 def cmd_benchmark(
-    cases: list[str] | None = None, with_eda: bool = True, out_path: str | None = None
+    cases: list[str] | None = None,
+    with_eda: bool = True,
+    out_path: str | None = None,
+    suite: str = "synthetic",
 ) -> int:
-    """Run the multi-dataset generality suite; exit 1 if any expectation fails."""
+    """Run a generality suite (synthetic or openml); exit 1 if any expectation fails."""
     import pandas as pd
 
     from mlkit.benchmarks import run_suite
 
     try:
-        res = run_suite(cases, with_eda=with_eda)
+        res = run_suite(cases, with_eda=with_eda, suite=suite)
     except ValueError as exc:
         logger.error("%s", exc)
         return 1
@@ -325,8 +335,20 @@ def build_parser() -> argparse.ArgumentParser:
     eda_p.add_argument(
         "--sample-rows", type=int, default=200_000, help="Analyse at most this many rows (0 = all)"
     )
+    eda_p.add_argument(
+        "--type",
+        action="append",
+        metavar="COL=TYPE",
+        help="Override a column type, e.g. --type stars=categorical --type day=datetime:yyyymmdd",
+    )
 
     bm_p = sub.add_parser("benchmark", help="Run the multi-dataset generality suite")
+    bm_p.add_argument(
+        "--suite",
+        choices=["synthetic", "openml"],
+        default="synthetic",
+        help="synthetic (offline, default) or openml (downloads 15 public datasets)",
+    )
     bm_p.add_argument("--case", action="append", help="Run only this case (repeatable)")
     bm_p.add_argument("--no-eda", action="store_true", help="Skip the EDA/report part of each case")
     bm_p.add_argument("--out", help="Write results (.csv/.parquet/.json)")
@@ -364,9 +386,12 @@ def main(argv: list[str] | None = None) -> None:
             out_path=args.out,
             profile_json=args.profile_json,
             sample_rows=args.sample_rows or None,
+            column_types=dict(t.split("=", 1) for t in (args.type or [])),
         )
     elif args.command == "benchmark":
-        code = cmd_benchmark(args.case, with_eda=not args.no_eda, out_path=args.out)
+        code = cmd_benchmark(
+            args.case, with_eda=not args.no_eda, out_path=args.out, suite=args.suite
+        )
     elif args.command == "steps":
         code = cmd_steps()
     else:

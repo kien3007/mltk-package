@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 import numpy as np
@@ -13,10 +14,10 @@ from mlkit.core.registry import register
 from mlkit.core.step import BaseStep
 from mlkit.qc_eda.profile import (
     ProfileOptions,
+    apply_coercion,
     coerce_boolean,
     coerce_datetime,
-    coerce_numeric,
-    normalize_missing,
+    deduplicate_columns,
     profile_dataframe,
 )
 
@@ -26,17 +27,21 @@ class TypeCaster(BaseStep):
     """Schema-driven type casting based on the shared column profile.
 
     At ``fit`` every column is profiled (:func:`mlkit.qc_eda.profile.infer_column`) and a cast
-    plan is frozen, so ``transform`` applies the *same* conversions to new data:
+    plan is frozen, so ``transform`` applies the *same* conversions to new data through
+    :func:`mlkit.qc_eda.profile.apply_coercion`:
 
-    - numbers stored as text ("1,234", "$5", "12%", "3,5") -> float
+    - numbers stored as text ("1,234", "$5", "12%", "3,5") and durations -> float
     - yes/no, true/false, y/n -> 0/1
-    - date strings -> datetime64 (expanded later by ``DatetimeFeatures``)
+    - date strings, timezone-aware dates and numeric date encodings -> naive datetime64
+      (expanded later by ``DatetimeFeatures``)
     - disguised missing tokens ("n/a", "null", "-") and +/-inf -> NaN
-    - categorical / text -> pandas ``category`` (text keeps ``object`` for ``TextFeatures``)
-    - dropped: identifiers, empty and constant columns, duplicated columns, ``cfg.id_col``,
-      ``cfg.group_col`` and ``cfg.time_col`` (see the ``drop_*`` switches) and ``drop_cols``
+    - categorical / codes with leading zeros -> pandas ``category``; text keeps ``object``
+    - dropped: identifiers, empty, constant, ignored and unsupported columns, duplicated
+      columns and duplicated column *names*, ``cfg.id_col``, ``cfg.group_col``, a numeric
+      ``cfg.time_col`` (see the ``drop_*`` switches) and ``drop_cols``
 
-    ``dtypes`` forces a dtype per column ({"zip": "category"}); forced columns are never dropped.
+    ``dtypes`` forces a pandas dtype per column ({"zip": "category"}); forced columns are never
+    dropped. Semantic overrides go through ``profile_options=ProfileOptions(overrides=...)``.
     """
 
     def __init__(
@@ -60,6 +65,7 @@ class TypeCaster(BaseStep):
         self.drop_duplicate_columns = drop_duplicate_columns
         self.profile_options = profile_options
         self.inferred_dtypes_: dict[str, str] = {}
+        self.coercions_: dict[Any, str | None] = {}
         self.dropped_cols_: list[str] = []
         self.drop_reasons_: dict[str, str] = {}
         self.semantic_types_: dict[str, str] = {}
@@ -71,15 +77,18 @@ class TypeCaster(BaseStep):
 
     def _fit(self, X: pd.DataFrame, y: Any = None, cfg: TaskConfig | None = None) -> TypeCaster:
         self.inferred_dtypes_ = {}
+        self.coercions_ = {}
         self.dropped_cols_ = []
         self.drop_reasons_ = {}
         self.semantic_types_ = {}
         forced = dict(self.dtypes or {})
+        X, dup_names = deduplicate_columns(X)
+        self.duplicate_names_ = dup_names
 
+        profile = profile_dataframe(X, options=self.profile_options)
         for c in self.drop_cols or []:
             if c in X.columns:
                 self._drop(c, "drop_cols")
-        profile = profile_dataframe(X, options=self.profile_options)
         if cfg is not None:
             for flag, col, reason in (
                 (self.drop_id, cfg.id_col, "id_col"),
@@ -118,42 +127,54 @@ class TypeCaster(BaseStep):
             kind = p.semantic_type
             if kind == "identifier" and self.drop_id:
                 self._drop(col, "identifier")
-            elif kind == "empty":
-                self._drop(col, "empty")
+            elif kind in ("empty", "ignored", "unsupported"):
+                self._drop(
+                    col, kind if kind != "unsupported" else "; ".join(p.notes) or "unsupported"
+                )
             elif kind == "constant" and self.drop_constant:
                 self._drop(col, "constant")
-            elif p.coercion == "numeric" or (
-                kind in ("numeric", "binary") and pd.api.types.is_numeric_dtype(X[col])
-            ):
-                self.inferred_dtypes_[col] = (
-                    "numeric_text" if p.coercion == "numeric" else "float64"
-                )
-            elif kind == "boolean":
-                self.inferred_dtypes_[col] = "boolean"
             elif kind == "datetime":
                 self.inferred_dtypes_[col] = "datetime64[ns]"
+            elif kind == "boolean":
+                self.inferred_dtypes_[col] = "boolean"
             elif kind == "text":
                 self.inferred_dtypes_[col] = "text"
-            elif pd.api.types.is_numeric_dtype(X[col]):
+            elif p.coercion in ("numeric", "timedelta") or (
+                kind in ("numeric", "binary") and pd.api.types.is_numeric_dtype(X[col])
+            ):
+                self.inferred_dtypes_[col] = "float64"
+            elif pd.api.types.is_numeric_dtype(X[col]) and p.coercion != "category":
                 self.inferred_dtypes_[col] = "float64"  # e.g. kept identifiers / constants
             else:
                 self.inferred_dtypes_[col] = "category"
+            self.coercions_[col] = p.coercion
+        self.plan_semantics_ = {c: self.semantic_types_[str(c)] for c in self.inferred_dtypes_}
 
         self.report_.add(
             "type_caster",
             "ok",
             f"Configured dtypes for {len(self.inferred_dtypes_)} columns, dropped ID cols: {self.dropped_cols_}",
-            {"drop_reasons": self.drop_reasons_, "semantic_types": self.semantic_types_},
+            {
+                "drop_reasons": self.drop_reasons_,
+                "semantic_types": self.semantic_types_,
+                "duplicate_names": dup_names,
+            },
         )
         return self
 
     def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        X, _ = deduplicate_columns(X)
         out = X.drop(columns=[c for c in self.dropped_cols_ if c in X.columns], errors="ignore")
-        # fast path: columns that already have a numeric dtype are cast as one block
+        semantics = getattr(self, "plan_semantics_", {})
+        coercions = getattr(self, "coercions_", {})
+        # fast path: plain numeric columns are cast as one block
         block = [
             c
             for c, t in self.inferred_dtypes_.items()
-            if t == "float64" and c in out.columns and pd.api.types.is_numeric_dtype(out[c])
+            if t == "float64"
+            and c in out.columns
+            and pd.api.types.is_numeric_dtype(out[c])
+            and not coercions.get(c)
         ]
         if block:
             out[block] = out[block].astype(float).replace([np.inf, -np.inf], np.nan)
@@ -161,29 +182,38 @@ class TypeCaster(BaseStep):
         for col, target in self.inferred_dtypes_.items():
             if col not in out.columns or col in done:
                 continue
-            s = normalize_missing(out[col])
-            if target == "numeric_text":
-                out[col] = coerce_numeric(s).replace([np.inf, -np.inf], np.nan)
-            elif target == "float64":
-                out[col] = (
-                    pd.to_numeric(s, errors="coerce")
-                    .astype(float)
-                    .replace([np.inf, -np.inf], np.nan)
+            try:
+                converted = apply_coercion(out[col], semantics.get(col, ""), coercions.get(col))
+                if target == "float64":
+                    out[col] = (
+                        pd.to_numeric(converted, errors="coerce")
+                        .astype(float)
+                        .replace([np.inf, -np.inf], np.nan)
+                    )
+                elif target == "boolean":
+                    out[col] = (
+                        coerce_boolean(converted)
+                        if not pd.api.types.is_numeric_dtype(converted)
+                        else converted.astype(float)
+                    )
+                elif target == "datetime64[ns]":
+                    out[col] = coerce_datetime(converted, coercions.get(col))
+                elif target == "text":
+                    out[col] = converted.where(converted.isna(), converted.astype(str)).astype(
+                        object
+                    )
+                elif target == "category":
+                    # keep missing values as NaN (not the string "nan") for the imputer
+                    out[col] = converted.where(converted.isna(), converted.astype(str)).astype(
+                        "category"
+                    )
+                else:
+                    out[col] = converted.astype(target)  # type: ignore[call-overload]  # user-forced dtype
+            except (TypeError, ValueError, OverflowError) as exc:
+                # never crash on unexpected values in new data: leave the column as-is and report
+                self.report_.add(
+                    "type_caster_transform", "warn", f"Could not convert '{col}': {exc}"
                 )
-            elif target == "boolean":
-                out[col] = s.astype(float) if pd.api.types.is_bool_dtype(s) else coerce_boolean(s)
-            elif target == "datetime64[ns]":
-                out[col] = coerce_datetime(s)
-            elif target == "text":
-                out[col] = s.where(s.isna(), s.astype(str)).astype(object)
-            elif target == "category":
-                # keep missing values as NaN (not the string "nan") for the imputer
-                out[col] = s.where(s.isna(), s.astype(str)).astype("category")
-            else:
-                try:
-                    out[col] = s.astype(target)  # type: ignore[call-overload]  # user-forced dtype
-                except (TypeError, ValueError):
-                    out[col] = s
         return out
 
 
@@ -501,6 +531,16 @@ class CategoricalEncoder(BaseStep):
         )
         return out
 
+    @staticmethod
+    def _onehot_name(col: Any, cat: str, existing: Any) -> str:
+        """``<col>_<category>`` without characters model libraries reject, kept unique."""
+        base = re.sub(r'[\[\]{}",:<>]', "_", f"{col}_{cat}")
+        name, k = base, 1
+        while name in existing:
+            k += 1
+            name = f"{base}__{k}"
+        return name
+
     def _transform(self, X: pd.DataFrame) -> pd.DataFrame:
         out = X.copy()
         for col, strategy in self.encoding_plan_.items():
@@ -510,7 +550,7 @@ class CategoricalEncoder(BaseStep):
             if strategy == "onehot":
                 col_str = out[col].astype(str)
                 for cat in self.onehot_categories_.get(col, []):
-                    out[f"{col}_{cat}"] = (col_str == cat).astype(int)
+                    out[self._onehot_name(col, cat, out.columns)] = (col_str == cat).astype(int)
                 out.drop(columns=[col], inplace=True)
 
             elif strategy == "ordinal":

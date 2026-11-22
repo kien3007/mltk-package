@@ -25,13 +25,11 @@ import pandas as pd
 from mlkit.qc_eda.profile import (
     DatasetProfile,
     ProfileOptions,
-    coerce_boolean,
-    coerce_datetime,
-    coerce_numeric,
-    normalize_missing,
+    apply_coercion,
+    deduplicate_columns,
 )
 
-_SKIP = ("empty", "constant", "identifier")
+_SKIP = ("empty", "constant", "identifier", "ignored", "unsupported")
 
 
 # ------------------------------------------------------------------ association measures
@@ -104,6 +102,7 @@ class EDAReport:
     missingness: pd.DataFrame = field(default_factory=pd.DataFrame)
     qc: Any = None
     analysed: pd.DataFrame | None = field(default=None, repr=False)  # typed sample used for charts
+    skipped: dict[str, str] = field(default_factory=dict)  # columns that could not be analysed
 
     def summary(self) -> str:
         p = self.profile
@@ -166,39 +165,62 @@ class EDAReport:
 
 
 # ------------------------------------------------------------------------ analysis
-def _typed_frame(df: pd.DataFrame, profile: DatasetProfile) -> tuple[pd.DataFrame, dict[str, str]]:
-    """Columns converted to analysable values, with kind 'num' or 'cat' (skips ids/constants)."""
+def _typed_frame(
+    df: pd.DataFrame, profile: DatasetProfile
+) -> tuple[pd.DataFrame, dict[str, str], dict[str, str]]:
+    """Columns converted to analysable values, with kind 'num' or 'cat' (skips ids/constants).
+
+    Conversions go through :func:`apply_coercion`, exactly as in preprocessing. A column that
+    still cannot be converted is skipped and reported (third return value), never raised.
+    """
     out: dict[str, pd.Series] = {}
     kinds: dict[str, str] = {}
+    skipped: dict[str, str] = {}
     by_name = {str(c): c for c in df.columns}
     for name, p in profile.columns.items():
-        if p.semantic_type in _SKIP:
+        if p.semantic_type in _SKIP or name not in by_name:
             continue
-        s = df[by_name[name]]
-        if isinstance(s, pd.DataFrame):
-            s = s.iloc[:, 0]
-        s = normalize_missing(s)
-        if p.coercion == "numeric":
-            out[name], kinds[name] = coerce_numeric(s), "num"
-        elif p.semantic_type == "boolean":
-            out[name] = s.astype(float) if pd.api.types.is_bool_dtype(s) else coerce_boolean(s)
-            kinds[name] = "cat"
-        elif p.semantic_type == "datetime":
-            dt = coerce_datetime(s)
-            secs = pd.Series(np.nan, index=s.index, dtype=float)
-            ok = dt.notna()
-            secs[ok] = dt[ok].astype("datetime64[ns]").astype("int64") / 1e9  # seconds since epoch
-            out[name], kinds[name] = secs, "num"
-        elif p.semantic_type == "text":
-            out[name], kinds[name] = s.astype("string").str.len().astype(float), "num"
-        elif p.semantic_type in ("numeric",) or (
-            p.semantic_type == "binary" and pd.api.types.is_numeric_dtype(s)
-        ):
-            out[name] = pd.to_numeric(s, errors="coerce").replace([np.inf, -np.inf], np.nan)
-            kinds[name] = "num" if p.semantic_type == "numeric" else "cat"
-        else:
-            out[name], kinds[name] = s.astype(object).where(s.notna(), np.nan), "cat"
-    return pd.DataFrame(out, index=df.index), kinds
+        try:
+            s = df[by_name[name]]
+            if isinstance(s, pd.DataFrame):
+                s = s.iloc[:, 0]
+            conv = apply_coercion(s, p.semantic_type, p.coercion)
+            if p.semantic_type == "datetime":
+                secs = pd.Series(np.nan, index=s.index, dtype=float)
+                ok = conv.notna()
+                secs[ok] = (
+                    conv[ok].astype("datetime64[ns]").astype("int64") / 1e9
+                )  # seconds since epoch
+                out[name], kinds[name] = secs, "num"
+            elif p.semantic_type == "text":
+                out[name], kinds[name] = conv.astype("string").str.len().astype(float), "num"
+            elif p.semantic_type == "numeric":
+                out[name], kinds[name] = pd.to_numeric(conv, errors="coerce").astype(float), "num"
+            elif pd.api.types.is_numeric_dtype(conv) and p.semantic_type in ("binary", "boolean"):
+                out[name], kinds[name] = conv.astype(float), "cat"
+            else:
+                try:
+                    obj = conv.astype(object)
+                except (TypeError, ValueError):
+                    obj = conv.map(str)
+                out[name], kinds[name] = (
+                    obj.where(conv.notna(), np.nan).map(
+                        lambda v: (
+                            v if isinstance(v, (str, float, int, bool)) or v is None else str(v)
+                        )
+                    ),
+                    "cat",
+                )
+        except Exception as exc:  # noqa: BLE001 - robustness contract
+            skipped[name] = f"{type(exc).__name__}: {str(exc)[:100]}"
+    return pd.DataFrame(out, index=df.index), kinds, skipped
+
+
+def _safe_association(a: pd.Series, a_kind: str, b: pd.Series, b_kind: str) -> tuple[float, str]:
+    try:
+        return association(a, a_kind, b, b_kind)
+    except Exception:  # noqa: BLE001 - one odd column must not stop the EDA
+        return float("nan"), "error"
 
 
 def _target_kind(y: pd.Series, task_type: str | None) -> tuple[str, str]:
@@ -249,6 +271,7 @@ def run_eda(
     with_qc: bool = True,
     profile_options: ProfileOptions | None = None,
     random_state: int = 0,
+    column_types: dict[str, str] | None = None,
 ) -> EDAReport:
     """Run the full EDA on ``df`` (optionally against ``target``, a column of ``df``)."""
     from mlkit.qc_eda.profile import profile_dataframe
@@ -258,8 +281,13 @@ def run_eda(
     data = df
     if sample_rows is not None and len(df) > sample_rows:
         data = df.sample(sample_rows, random_state=random_state)
+    data, _dups = deduplicate_columns(data)
     X = data.drop(columns=[target]) if target is not None else data
     y = data[target] if target is not None else None
+    if column_types:
+        profile_options = ProfileOptions(
+            **{**vars(profile_options or ProfileOptions()), "overrides": dict(column_types)}
+        )
 
     profile = profile_dataframe(X, y=y, task_type=task_type, options=profile_options)
     qc = None
@@ -274,7 +302,7 @@ def run_eda(
             X, y=y, cfg=cfg
         )
 
-    typed, kinds = _typed_frame(X, profile)
+    typed, kinds, skipped = _typed_frame(X, profile)
     report = EDAReport(
         profile=profile,
         target=target,
@@ -283,6 +311,7 @@ def run_eda(
         associations=pd.DataFrame(),
         qc=qc,
         analysed=typed,
+        skipped=skipped,
     )
 
     ranked = list(typed.columns)
@@ -296,7 +325,7 @@ def run_eda(
         )
         rows = []
         for col in typed.columns:
-            strength, method = association(typed[col], kinds[col], y_ana, t_ana)
+            strength, method = _safe_association(typed[col], kinds[col], y_ana, t_ana)
             rows.append(
                 {
                     "feature": col,
@@ -307,7 +336,7 @@ def run_eda(
                 }
             )
         ta = (
-            pd.DataFrame(rows)
+            pd.DataFrame(rows, columns=["feature", "type", "method", "strength", "n"])
             .sort_values("strength", ascending=False, na_position="last")
             .reset_index(drop=True)
         )
@@ -372,7 +401,7 @@ def run_eda(
         mat = pd.DataFrame(np.eye(len(top)), index=top, columns=top)
         for i, col_a in enumerate(top):
             for col_b in top[i + 1 :]:
-                v, _ = association(typed[col_a], kinds[col_a], typed[col_b], kinds[col_b])
+                v, _ = _safe_association(typed[col_a], kinds[col_a], typed[col_b], kinds[col_b])
                 mat.loc[col_a, col_b] = mat.loc[col_b, col_a] = v
         report.associations = mat
     return report
