@@ -41,6 +41,7 @@ from mlkit.preprocessing import (
     TypeCaster,
 )
 from mlkit.qc_eda import QualityCheckStep
+from mlkit.qc_eda.profile import ProfileOptions
 from mlkit.selection import CorrelationFilter, ModelImportanceSelector, VarianceFilter
 
 logger = get_logger(__name__)
@@ -97,12 +98,18 @@ def build_default_pipeline(cfg: TaskConfig) -> Pipeline:
     columns are target/frequency encoded with smoothing instead.
     """
     modelling = cfg.modelling or {}
+    profile_options = ProfileOptions(overrides=dict(cfg.column_types)) if cfg.column_types else None
     encoder = CategoricalEncoder(random_state=cfg.seed)
     steps = [
-        ("qc", QualityCheckStep(enforce_gate=cfg.quality_gate, **cfg.qc)),
-        ("type_caster", TypeCaster(drop_id=True)),
+        (
+            "qc",
+            QualityCheckStep(
+                enforce_gate=cfg.quality_gate, profile_options=profile_options, **cfg.qc
+            ),
+        ),
+        ("type_caster", TypeCaster(drop_id=True, profile_options=profile_options)),
         ("datetime", DatetimeFeatures()),
-        ("text", TextFeatures()),
+        ("text", TextFeatures(profile_options=profile_options)),
         ("imputer", MissingImputer(add_indicator="auto", categorical_strategy="missing_value")),
         (
             "rare_grouper",

@@ -100,10 +100,37 @@ qc.issues_frame_                             # cột, kiểm tra, mức độ, c
 | `rare_grouper` | Chỉ gộp mức hiếm (< 10 dòng) ở cột ít giá trị. |
 | `encoder` | One-hot cho cột ≤ 10 giá trị; target encoding OOF cho cột nhiều hơn; frequency khi không có target; ordinal chỉ khi chỉ định. |
 
+### Độ bền và chỉ định kiểu cột (ADR-008)
+
+- **Không crash ở mức từng cột:** cột không phân tích được có kiểu `unsupported`, lý do được ghi lại, và cột bị
+  loại khỏi feature thay vì làm hỏng cả bảng.
+- **Nhận đúng ý nghĩa** cho:
+  - datetime có timezone (đổi về UTC);
+  - ngày lưu dạng số (`20240101`; epoch hay Excel khi tên cột gợi ý là ngày);
+  - timedelta (đổi sang giây);
+  - mã có số 0 đứng đầu (giữ dạng chữ) và số điện thoại (không biến thành số).
+- **Cảnh báo `leakage_suspect`** cho rò rỉ một phần: cột chỉ được ghi sau khi biết kết quả, hoặc biến đại diện
+  cho target.
+- **Khi suy luận không chắc chắn, bạn quyết định kiểu cột**, và mọi bước đều dùng cùng quyết định đó:
+
+```yaml
+column_types:                 # trong config YAML (TaskConfig)
+  stars: categorical          # số nguyên ít giá trị nhưng thực chất là mã
+  order_day: datetime:yyyymmdd
+  created: datetime:epoch_s   # cũng có: epoch_ms, excel, hoặc định dạng strftime như datetime:%d/%m/%Y
+  notes: ignore
+```
+
+```bash
+mlkit eda data.csv --target y --type stars=categorical --type order_day=datetime:yyyymmdd
+```
+
 ### Benchmark tính tổng quát
 
 ```bash
 mlkit benchmark                 # 16 dataset, mỗi dataset một kỳ vọng (thoát mã 1 nếu có ca trượt)
+mlkit benchmark --suite openml  # 15 dataset thật từ openml.org (cần mạng; CI chạy hằng tuần)
+MLKIT_FUZZ_EXAMPLES=400 uv run pytest tests/test_robustness.py -k fuzz   # fuzz test sâu
 uv run pytest -m benchmark      # cùng bộ ca, dạng test (CI chạy ở job riêng)
 ```
 

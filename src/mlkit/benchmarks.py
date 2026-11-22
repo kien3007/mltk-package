@@ -11,8 +11,9 @@ so that the signal is only reachable when the data-foundation layer does its job
 - ``leaky``: a feature determines the target; QC must stop the pipeline
 
 Run ``mlkit benchmark`` (exit code 1 if any expectation fails) or :func:`run_suite`.
+``mlkit benchmark --suite openml`` runs 15 real public datasets from openml.org instead.
 Every case also runs the full EDA (profile, QC, charts, HTML) to prove it never crashes.
-Only offline data is used (synthetic generators and scikit-learn's bundled datasets).
+The default suite is offline (synthetic generators and scikit-learn's bundled datasets).
 """
 
 from __future__ import annotations
@@ -223,6 +224,120 @@ CASES: list[Case] = [
 ]
 
 
+# --------------------------------------------------------------------------- OpenML suite
+def _openml(
+    data_id: int, max_rows: int | None = 20_000
+) -> Callable[[np.random.Generator], pd.DataFrame]:
+    """Real-world dataset from openml.org (cached by scikit-learn after the first download)."""
+
+    def make(rng: np.random.Generator) -> pd.DataFrame:
+        from sklearn.datasets import fetch_openml
+
+        bunch = fetch_openml(data_id=data_id, as_frame=True, parser="auto")
+        df = bunch.frame.rename(columns={bunch.target.name: "target"})
+        if max_rows is not None and len(df) > max_rows:
+            df = df.sample(max_rows, random_state=int(rng.integers(0, 2**31 - 1)))
+        return df.reset_index(drop=True)
+
+    return make
+
+
+#: Real datasets with diverse quirks. Minimums are regression guards set somewhat below the
+#: scores observed when the suite was added (not state-of-the-art targets).
+OPENML_CASES: list[Case] = [
+    Case(
+        "credit-g",
+        _openml(31),
+        metric=("roc_auc", 0.70),
+        description="mixed categorical credit data",
+    ),
+    Case(
+        "pima_diabetes", _openml(37), metric=("roc_auc", 0.78), description="small numeric medical"
+    ),
+    Case(
+        "blood_transfusion",
+        _openml(1464),
+        metric=("roc_auc", 0.65),
+        description="tiny numeric, imbalanced",
+    ),
+    Case("phoneme", _openml(1489), metric=("roc_auc", 0.85), description="numeric signal features"),
+    Case(
+        "adult",
+        _openml(1590),
+        metric=("roc_auc", 0.88),
+        description="census, missing values (sampled 20k)",
+    ),
+    Case(
+        "bank_marketing",
+        _openml(1461),
+        metric=("roc_auc", 0.88),
+        description="imbalanced, categorical",
+    ),
+    Case(
+        "titanic",
+        _openml(40945),
+        metric=("roc_auc", 0.80),
+        qc_warns=("leakage_suspect",),  # 'boat' is recorded only for survivors
+        description="names, tickets, cabins, missing; leaky 'boat' must be flagged",
+    ),
+    Case(
+        "speed_dating",
+        _openml(40536),
+        metric=("roc_auc", 0.75),
+        description="121 columns, '?' missing tokens",
+    ),
+    Case(
+        "amazon_access",
+        _openml(4135),
+        metric=("roc_auc", 0.65),
+        description="high-cardinality codes as ints",
+    ),
+    Case(
+        "house_prices",
+        _openml(42165),
+        "regression",
+        metric=("r2", 0.70),
+        description="81 mixed columns",
+    ),
+    Case(
+        "bike_sharing",
+        _openml(42712),
+        "regression",
+        metric=("r2", 0.50),
+        description="time/seasonal features",
+    ),
+    Case(
+        "employee_salaries",
+        _openml(42125),
+        "regression",
+        metric=("r2", 0.50),
+        qc_warns=("leakage_suspect",),  # 2016_gross_pay_received is a proxy of the salary
+        description="dates, high-card text; salary proxy must be flagged",
+    ),
+    Case(
+        "wine_quality",
+        _openml(287),
+        "regression",
+        metric=("r2", 0.25),
+        description="numeric target 3-9",
+    ),
+    Case(
+        "australian_credit",
+        _openml(40981),
+        metric=("roc_auc", 0.85),
+        description="anonymised mixed codes",
+    ),
+    Case(
+        "cmc_multiclass",
+        _openml(23),
+        expect_error=ValidationError,
+        description="3 classes: clear rejection",
+    ),
+]
+
+SUITES: dict[str, list[Case]] = {"synthetic": CASES, "openml": OPENML_CASES}
+
+
 # ------------------------------------------------------------------------------ runner
 def run_case(case: Case, seed: int = 0, with_eda: bool = True) -> dict[str, Any]:
     """Run one case; returns a result row with ``passed`` and a human-readable ``detail``."""
@@ -288,11 +403,17 @@ def run_case(case: Case, seed: int = 0, with_eda: bool = True) -> dict[str, Any]
     return row
 
 
-def run_suite(names: list[str] | None = None, seed: int = 0, with_eda: bool = True) -> pd.DataFrame:
-    cases = [c for c in CASES if names is None or c.name in names]
-    unknown = sorted(set(names or []) - {c.name for c in CASES})
+def run_suite(
+    names: list[str] | None = None, seed: int = 0, with_eda: bool = True, suite: str = "synthetic"
+) -> pd.DataFrame:
+    """Run a benchmark suite ("synthetic": offline, "openml": downloads public datasets)."""
+    if suite not in SUITES:
+        raise ValueError(f"Unknown suite {suite!r}. Available: {sorted(SUITES)}")
+    pool = SUITES[suite]
+    cases = [c for c in pool if names is None or c.name in names]
+    unknown = sorted(set(names or []) - {c.name for c in pool})
     if unknown:
         raise ValueError(
-            f"Unknown benchmark case(s): {unknown}. Available: {[c.name for c in CASES]}"
+            f"Unknown benchmark case(s): {unknown}. Available: {[c.name for c in pool]}"
         )
     return pd.DataFrame([run_case(c, seed=seed, with_eda=with_eda) for c in cases])

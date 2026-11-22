@@ -1,5 +1,33 @@
 # Changelog
 
+## [Unreleased] - độ bền tầng dữ liệu (ADR-008)
+
+### Sửa lỗi (phát hiện qua dò lỗi trường hợp biên và dữ liệu thật)
+- **Crash:**
+  - datetime có timezone và chuỗi ngày trộn nhiều timezone;
+  - tên cột trùng (kể cả `1` và `"1"`);
+  - histogram số nguyên rất lớn trong dải hẹp; bảng không có feature;
+  - cột chứa list/dict trong QC;
+  - tên cột one-hot chứa ký tự JSON làm LightGBM crash (SpeedDating).
+- **Hiểu sai ý nghĩa:**
+  - mã có số 0 đứng đầu bị biến thành số; số điện thoại bị biến thành số;
+  - timedelta bị coi là category;
+  - ngày lưu dạng số (`yyyymmdd`, epoch, Excel) bị coi là số thường;
+  - EDA chưa bỏ qua cột bị đánh dấu `ignore`.
+
+### Tính năng
+- `apply_coercion`: một nguồn sự thật cho việc chuyển kiểu, dùng chung bởi profile, TypeCaster, EDA và QC.
+- Không crash ở mức từng cột: kiểu `unsupported` / `ignored`; xử lý lỗi theo từng cột, từng cặp, từng panel.
+- `TaskConfig.column_types`, `ProfileOptions(overrides=...)`, `mlkit eda --type col=kiểu` (kể cả các dạng
+  `datetime:yyyymmdd|epoch_s|epoch_ms|excel|<strftime>`).
+- QC mới:
+  - `ambiguous_types`, `unsupported_columns`, `duplicate_names`;
+  - `leakage_suspect`: rò rỉ một phần qua giá trị (phân loại ≥ 0,97, hồi quy ≥ 0,9) và qua việc giá trị bị thiếu
+    (≥ 0,8). Hiệu chỉnh trên dữ liệu thật; không có báo nhầm trên 30 dataset.
+- Fuzz test bằng `hypothesis` (CI và `MLKIT_FUZZ_EXAMPLES`); 25 trường hợp biên trở thành test hồi quy.
+- `mlkit benchmark --suite openml`: 15 dataset công khai; workflow CI hằng tuần (`benchmark-openml.yml`).
+- LightGBM/XGBoost nhận tên cột theo vị trí (`f0..fN`), nên tên cột lạ không còn làm thư viện crash.
+
 ## [Unreleased] - nền tảng dữ liệu (ADR-007)
 
 ### Hiểu dữ liệu

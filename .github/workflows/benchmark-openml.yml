@@ -1,0 +1,32 @@
+name: OpenML benchmark
+
+# Real-data guard-rail: 15 public datasets from openml.org (profile + QC + EDA + training).
+# Network-dependent and ~4 minutes, so it runs weekly and on demand rather than on every PR.
+on:
+  schedule:
+    - cron: "0 3 * * 1"   # Mondays 03:00 UTC
+  workflow_dispatch:
+
+jobs:
+  openml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+      - name: Cache OpenML downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/scikit_learn_data
+          key: openml-${{ hashFiles('src/mlkit/benchmarks.py') }}
+          restore-keys: openml-
+      - name: Run OpenML suite
+        env:
+          MPLBACKEND: Agg
+        run: uv run mlkit benchmark --suite openml --out openml-results.csv
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openml-results
+          path: openml-results.csv

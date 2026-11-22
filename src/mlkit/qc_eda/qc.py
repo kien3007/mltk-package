@@ -16,7 +16,7 @@ from mlkit.core.config import TaskConfig
 from mlkit.core.registry import register
 from mlkit.core.report import Severity
 from mlkit.core.step import BaseStep
-from mlkit.qc_eda.profile import DatasetProfile, ProfileOptions, coerce_numeric, profile_dataframe
+from mlkit.qc_eda.profile import DatasetProfile, ProfileOptions, apply_coercion, profile_dataframe
 
 
 def univariate_signal(
@@ -48,7 +48,7 @@ def univariate_signal(
         else:
             codes = pd.factorize(xv)[0]
     else:
-        codes = pd.factorize(xv.astype(str))[0]
+        codes = pd.factorize(pd.Series(xv).map(str).to_numpy())[0]  # map(str): lists/dicts too
         if codes.max() + 1 > max_bins:
             return None  # too many categories for a trustworthy estimate (identifier-like)
     n_bins = int(codes.max()) + 1
@@ -107,6 +107,9 @@ class QualityCheckStep(BaseStep):
         quasi_constant_share: float = 0.99,
         outlier_rate_warn: float = 0.05,
         imbalance_warn: float = 0.05,
+        leakage_warn_threshold: float = 0.97,
+        missing_leakage_warn: float = 0.8,
+        leakage_warn_threshold_regression: float = 0.9,
         profile_options: ProfileOptions | None = None,
     ) -> None:
         super().__init__()
@@ -119,6 +122,9 @@ class QualityCheckStep(BaseStep):
         self.quasi_constant_share = quasi_constant_share
         self.outlier_rate_warn = outlier_rate_warn
         self.imbalance_warn = imbalance_warn
+        self.leakage_warn_threshold = leakage_warn_threshold
+        self.missing_leakage_warn = missing_leakage_warn
+        self.leakage_warn_threshold_regression = leakage_warn_threshold_regression
         self.profile_options = profile_options
         self.data_quality_score_: float = 100.0
 
@@ -351,6 +357,42 @@ class QualityCheckStep(BaseStep):
                 f"{len(coerced)} columns stored as text will be converted: {coerced}",
                 {"columns": coerced},
             )
+        if prof.duplicate_names:
+            self._report_columns(
+                "duplicate_names",
+                prof.duplicate_names,
+                "warn",
+                "column names appear more than once",
+                "",
+                "only the first occurrence is used; rename upstream",
+            )
+        unsupported = prof.columns_of("unsupported")
+        if unsupported:
+            self._report_columns(
+                "unsupported_columns",
+                unsupported,
+                "warn",
+                "columns could not be analysed (see profile notes)",
+                "",
+                "excluded from features; convert them upstream or set column_types",
+            )
+            for c in unsupported:
+                self._issue(
+                    c, "unsupported_columns", "warn", "; ".join(cols[c].notes), "convert upstream"
+                )
+        ambiguous = [c for c, p in cols.items() if p.ambiguous]
+        if ambiguous:
+            self._report_columns(
+                "ambiguous_types",
+                ambiguous,
+                "warn",
+                "columns whose type is a judgement call",
+                "",
+                "confirm with TaskConfig.column_types (e.g. {'stars': 'categorical'})",
+            )
+            for c in ambiguous:
+                note = next(n for n in cols[c].notes if n.startswith("ambiguous"))
+                self._issue(c, "ambiguous_types", "warn", note, "set column_types")
         mixed = [c for c, p in cols.items() if any(n.startswith("mixed types") for n in p.notes)]
         if mixed:
             self._report_columns(
@@ -461,29 +503,91 @@ class QualityCheckStep(BaseStep):
         y_r = y.reset_index(drop=True)
         by_name = {str(c): c for c in X.columns}
         suspects: list[tuple[str, float]] = []
+        warn_values: list[tuple[str, float]] = []
+        warn_missing: list[tuple[str, float]] = []
         for c, p in prof.columns.items():
-            if p.semantic_type in ("empty", "constant", "identifier", "text"):
+            if p.semantic_type in (
+                "empty",
+                "constant",
+                "identifier",
+                "text",
+                "ignored",
+                "unsupported",
+            ):
                 continue
             col = X[by_name[c]]
             if isinstance(col, pd.DataFrame):  # duplicated column names
                 col = col.iloc[:, 0]
-            x = col.reset_index(drop=True)
-            if p.coercion == "numeric":
-                x = coerce_numeric(x)
-            elif p.semantic_type in ("numeric", "binary") and pd.api.types.is_numeric_dtype(x):
-                x = x.replace([np.inf, -np.inf], np.nan)
-            if x.astype(str).equals(y_r.astype(str)):
-                suspects.append((c, 1.0))
+            try:
+                x = apply_coercion(col.reset_index(drop=True), p.semantic_type, p.coercion)
+                if pd.api.types.is_datetime64_any_dtype(x):
+                    x = pd.Series(
+                        x.to_numpy(dtype="datetime64[ns]").astype("int64"), dtype=float
+                    ).where(x.notna())
+            except Exception:  # noqa: BLE001 - leakage screening must not crash on odd columns
                 continue
-            score = univariate_signal(x, y_r, kind)
-            if kind == "regression" and pd.api.types.is_numeric_dtype(x):
-                valid = x.notna() & y_r.notna()
-                if valid.sum() > 20:
-                    rho = x[valid].rank().corr(pd.to_numeric(y_r[valid], errors="coerce").rank())
-                    if not np.isnan(rho):
-                        score = max(score or 0.0, abs(float(rho)))
+            try:
+                if x.astype(str).equals(y_r.astype(str)):
+                    suspects.append((c, 1.0))
+                    continue
+                score = univariate_signal(x, y_r, kind)
+                if kind == "regression" and pd.api.types.is_numeric_dtype(x):
+                    valid = x.notna() & y_r.notna()
+                    if valid.sum() > 20:
+                        rho = (
+                            x[valid].rank().corr(pd.to_numeric(y_r[valid], errors="coerce").rank())
+                        )
+                        if not np.isnan(rho):
+                            score = max(score or 0.0, abs(float(rho)))
+            except Exception:  # noqa: BLE001 - one odd column must not stop QC
+                continue
             if score is not None and score >= self.leakage_threshold:
                 suspects.append((c, round(score, 4)))
+                continue
+            # |Spearman| / eta^2 (regression) and rank separation (classification) live on
+            # different scales; thresholds were calibrated on real datasets (see ADR-008).
+            warn_at = (
+                self.leakage_warn_threshold_regression
+                if kind == "regression"
+                else self.leakage_warn_threshold
+            )
+            if score is not None and score >= warn_at:
+                warn_values.append((c, round(score, 4)))
+            # Leakage through *missingness*: fields filled in only after the outcome (lifeboat
+            # number, cancellation date...) are missing for one class and present for the other.
+            if 0 < p.missing_rate < 1:
+                try:
+                    miss = univariate_signal(
+                        col.reset_index(drop=True).isna().astype(int), y_r, kind
+                    )
+                except Exception:  # noqa: BLE001
+                    miss = None
+                if miss is not None and miss >= self.missing_leakage_warn:
+                    warn_missing.append((c, round(miss, 4)))
+        if warn_values or warn_missing:
+            parts = []
+            if warn_values:
+                parts.append(f"near-deterministic values {warn_values}")
+            if warn_missing:
+                parts.append(
+                    f"whether the value is missing almost determines the target {warn_missing}"
+                )
+            self.report_.add(
+                "leakage_suspect",
+                "warn",
+                "Possible target leakage: "
+                + "; ".join(parts)
+                + ". Typical of fields recorded after the outcome - verify they exist at prediction time.",
+                {"value_signal": warn_values, "missing_signal": warn_missing},
+            )
+            for c, sc in warn_values + warn_missing:
+                self._issue(
+                    c,
+                    "leakage_suspect",
+                    "warn",
+                    f"single-feature signal {sc}",
+                    "confirm it is available before the prediction time",
+                )
         if suspects:
             self.report_.add(
                 "data_leakage",

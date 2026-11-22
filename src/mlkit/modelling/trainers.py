@@ -90,12 +90,22 @@ class BaseTrainer(BaseEstimator):
         """Return an unfitted library estimator for target ``y``."""
         raise NotImplementedError
 
+    #: Rename columns to f0..fN before handing data to the library (LightGBM/XGBoost reject
+    #: names containing JSON characters such as [ ] { } " , :). Importances stay positional.
+    _positional_names: bool = False
+
+    def _prep(self, X: pd.DataFrame | np.ndarray) -> pd.DataFrame | np.ndarray:
+        if not self._positional_names:
+            return X
+        df = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
+        return df.set_axis([f"f{i}" for i in range(df.shape[1])], axis=1)
+
     def fit(self, X: pd.DataFrame | np.ndarray, y: Any) -> BaseTrainer:
         df = X if isinstance(X, pd.DataFrame) else pd.DataFrame(X)
         self.feature_names_in_ = [str(c) for c in df.columns]
         y_arr = np.asarray(y)
         self._estimator = self._build(y_arr)
-        self._estimator.fit(df, y_arr)
+        self._estimator.fit(self._prep(df), y_arr)
         self._is_fitted = True
         return self
 
@@ -106,7 +116,7 @@ class BaseTrainer(BaseEstimator):
     # --------------------------------------------------------- prediction
     def predict(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
         self._check_fitted()
-        return self._estimator.predict(X)
+        return self._estimator.predict(self._prep(X))
 
     def predict_proba(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
         self._check_fitted()
@@ -116,7 +126,7 @@ class BaseTrainer(BaseEstimator):
             raise AttributeError(
                 f"{type(self._estimator).__name__} does not support predict_proba."
             )
-        return self._estimator.predict_proba(X)
+        return self._estimator.predict_proba(self._prep(X))
 
     @property
     def classes_(self) -> np.ndarray:
@@ -241,6 +251,8 @@ class RandomForestTrainer(BaseTrainer):
 class LGBMTrainer(BaseTrainer):
     """LightGBM wrapper; binary imbalance handled with ``scale_pos_weight``."""
 
+    _positional_names = True
+
     def __init__(
         self,
         n_estimators: int = 150,
@@ -284,6 +296,8 @@ class LGBMTrainer(BaseTrainer):
 @register("modelling.xgboost")
 class XGBTrainer(BaseTrainer):
     """XGBoost wrapper with native DataFrame support (requires the ``xgboost`` extra)."""
+
+    _positional_names = True
 
     def __init__(
         self,

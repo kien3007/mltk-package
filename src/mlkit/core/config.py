@@ -47,6 +47,16 @@ class TaskConfig(BaseModel):
     data_path: str | None = None
     steps: list[dict[str, Any]] | None = None
     tracking: dict[str, Any] = Field(default_factory=dict)
+    #: Per-column semantic type overrides, honoured by QC, EDA and preprocessing alike, e.g.
+    #: {"stars": "categorical", "order_day": "datetime:yyyymmdd", "notes": "ignore"}.
+    column_types: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("column_types")
+    @classmethod
+    def _check_column_types(cls, v: dict[str, str]) -> dict[str, str]:
+        from mlkit.qc_eda.profile import validate_override
+
+        return {str(k): validate_override(t) for k, t in v.items()}
 
     @field_validator("test_size")
     @classmethod
