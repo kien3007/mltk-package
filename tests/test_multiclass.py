@@ -159,3 +159,22 @@ def test_lower_is_better_log_loss_gate():
     res = train(cfg, _iris())
     assert res.metrics["thresholds_passed"] is False
     assert any("log_loss" in f and "must be <=" in f for f in res.metrics["threshold_failures"])
+
+
+def test_trainers_follow_sklearn_score_convention():
+    """Found by the full-test notebook: sklearn.learning_curve needs estimator.score."""
+    from sklearn.linear_model import LinearRegression
+    from sklearn.model_selection import cross_val_score, learning_curve
+
+    from mlkit.modelling import LinearTrainer, SklearnModelWrapper
+
+    X, y = datasets.load_wine(return_X_y=True, as_frame=True)
+    clf = LinearTrainer(max_iter=3000).fit(X, y)
+    assert clf.score(X, y) == pytest.approx((clf.predict(X) == y).mean())
+    reg = SklearnModelWrapper(LinearRegression()).fit(X, X.iloc[:, 0])
+    assert reg.score(X, X.iloc[:, 0]) == pytest.approx(1.0)
+    assert len(cross_val_score(LinearTrainer(max_iter=3000), X, y, cv=3)) == 3
+    sizes, train_scores, _ = learning_curve(
+        LinearTrainer(max_iter=3000), X, y, cv=3, train_sizes=[0.5, 1.0]
+    )
+    assert train_scores.shape == (2, 3)

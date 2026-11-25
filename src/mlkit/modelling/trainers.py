@@ -128,6 +128,19 @@ class BaseTrainer(BaseEstimator):
             )
         return self._estimator.predict_proba(self._prep(X))
 
+    def score(self, X: pd.DataFrame | np.ndarray, y: Any, sample_weight: Any = None) -> float:
+        """scikit-learn convention: accuracy for classifiers, R^2 for regressors.
+
+        Needed by sklearn tools that fall back to ``estimator.score`` (learning_curve,
+        cross_val_score, GridSearchCV without ``scoring``).
+        """
+        from sklearn.metrics import accuracy_score, r2_score
+
+        pred = self.predict(X)
+        if self._resolved_type() == "regressor":
+            return float(r2_score(y, pred, sample_weight=sample_weight))
+        return float(accuracy_score(y, pred, sample_weight=sample_weight))
+
     @property
     def classes_(self) -> np.ndarray:
         self._check_fitted()
