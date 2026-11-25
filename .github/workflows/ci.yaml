@@ -66,7 +66,7 @@ jobs:
           uv run mlkit -q monitor ./artifacts/housing examples/data/california_housing.csv
 
   benchmark:
-    # Generality guard-rail: default pipeline + EDA on 16 dataset shapes, each with an expectation.
+    # Generality guard-rail: default pipeline + EDA on 18 dataset shapes + 3 forecasting cases, each with an expectation.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

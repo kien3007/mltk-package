@@ -260,6 +260,31 @@ def _buckets(x: pd.Series, kind: str, max_categories: int, n_bins: int) -> pd.Se
     return s.where(s.isin(top) | (s == "(missing)"), "(other)")
 
 
+def stratified_sample(
+    df: pd.DataFrame,
+    n: int,
+    by: str | None = None,
+    min_per_group: int = 200,
+    random_state: int = 0,
+) -> pd.DataFrame:
+    """``n`` rows sampled proportionally within ``by`` groups, keeping at least
+    ``min_per_group`` rows of every group (all of them when smaller), so rare classes survive
+    the sampling of a large frame. Without ``by`` it is a plain uniform sample."""
+    if len(df) <= n:
+        return df
+    if by is None:
+        return df.sample(n, random_state=random_state)
+    codes, _ = pd.factorize(df[by], use_na_sentinel=False)
+    counts = np.bincount(codes)
+    rng = np.random.default_rng(random_state)
+    parts = []
+    for k, c in enumerate(counts):
+        q = min(int(c), max(min_per_group, int(round(n * c / len(df)))))
+        idx = np.flatnonzero(codes == k)
+        parts.append(rng.choice(idx, size=q, replace=False) if q < len(idx) else idx)
+    return df.iloc[np.sort(np.concatenate(parts))]
+
+
 def run_eda(
     df: pd.DataFrame,
     target: str | None = None,
@@ -280,7 +305,10 @@ def run_eda(
         raise KeyError(f"Target column '{target}' not in data")
     data = df
     if sample_rows is not None and len(df) > sample_rows:
-        data = df.sample(sample_rows, random_state=random_state)
+        stratify = target is not None and task_type != "regression" and df[target].nunique() <= 50
+        data = stratified_sample(
+            df, sample_rows, by=target if stratify else None, random_state=random_state
+        )
     data, _dups = deduplicate_columns(data)
     X = data.drop(columns=[target]) if target is not None else data
     y = data[target] if target is not None else None

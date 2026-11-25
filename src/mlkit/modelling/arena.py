@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Literal
 
 import numpy as np
@@ -25,6 +26,7 @@ from mlkit.modelling.trainers import (
     LGBMTrainer,
     LinearTrainer,
     RandomForestTrainer,
+    SklearnModelWrapper,
     XGBTrainer,
 )
 
@@ -49,6 +51,9 @@ class ModelArena(BaseStep):
         calibration_cv: int = 3,
         threshold: str | float = 0.5,
         tuning: dict[str, Any] | None = None,
+        ensemble: str | None = None,
+        ensemble_top_k: int = 3,
+        time_budget: float | None = None,
     ) -> None:
         """
         Parameters (selection of)
@@ -73,6 +78,9 @@ class ModelArena(BaseStep):
         self.calibration_cv = calibration_cv
         self.threshold = threshold
         self.tuning = tuning
+        self.ensemble = ensemble
+        self.ensemble_top_k = ensemble_top_k
+        self.time_budget = time_budget
 
         self.best_model_name_: str = ""
         self.best_estimator_: Any = None
@@ -192,8 +200,23 @@ class ModelArena(BaseStep):
         records = []
         eval_scores = {}
 
-        for name, model in zoo.items():
+        if self.ensemble not in (None, "vote", "stack"):
+            raise ValueError("ensemble must be None, 'vote' or 'stack'")
+        # the budget clock starts when the caller says so (runner: start of train()), so
+        # profiling / preprocessing time counts against time_budget too
+        self._t0 = self.__dict__.pop("budget_clock_", None) or time.perf_counter()
+        self.skipped_: list[str] = []
+        self.ensemble_members_: list[str] = []
+        self.timings_: dict[str, float] = {}
+        for i, (name, model) in enumerate(zoo.items()):
+            # time budget (cost-based, best effort): always keep the baseline and the first
+            # candidate; later ones only start if a typical CV run still fits in half the budget
+            if i >= 2 and not self._fits(self._typical_cost(), 0.5):
+                self.skipped_.append(name)
+                continue
+            t_start = time.perf_counter()
             res = evaluator.evaluate_folds(model, folds)
+            self.timings_[name] = time.perf_counter() - t_start
             self.cv_results_[name] = res
             score = res["primary_score"]
             eval_scores[name] = (score, model)
@@ -216,8 +239,33 @@ class ModelArena(BaseStep):
             records.append(rec)
 
         self.tuned_params_: dict[str, dict[str, Any]] = {}
+        if self.skipped_:
+            self.report_.add(
+                "time_budget",
+                "warn",
+                f"Skipped to respect time_budget={self.time_budget}s: {self.skipped_}",
+            )
         if self.tuning:
-            for name, model, res in self._tune(evaluator, folds, task_type, eval_scores):
+            if self._fits(3 * self._typical_cost(), 0.6):
+                for name, model, res in self._tune(evaluator, folds, task_type, eval_scores):
+                    self.cv_results_[name] = res
+                    eval_scores[name] = (res["primary_score"], model)
+                    self.timings_.setdefault(
+                        name, self.timings_.get(name.removesuffix(" (tuned)"), 0.0)
+                    )
+                    records.append(self._record(name, res, task_type))
+            else:
+                self.skipped_.append("tuning")
+                self.report_.add(
+                    "time_budget", "warn", "Tuning skipped: not enough time_budget left."
+                )
+        if self.ensemble:
+            built = self._build_ensemble(task_type, eval_scores)
+            if built is not None:
+                name, model = built
+                t_start = time.perf_counter()
+                res = evaluator.evaluate_folds(model, folds)
+                self.timings_[name] = time.perf_counter() - t_start
                 self.cv_results_[name] = res
                 eval_scores[name] = (res["primary_score"], model)
                 records.append(self._record(name, res, task_type))
@@ -260,8 +308,17 @@ class ModelArena(BaseStep):
         # 4. Optional calibration, validated on the same folds
         final_model: Any = winning_trainer
         self.calibration_: str | None = None
+        winner_cost = self.timings_.get(winner_name, self._typical_cost())
+        n_methods = 2 if self.calibration == "auto" else 1
         if task_type == "classification" and self.calibration:
-            final_model = self._select_calibration(evaluator, winning_trainer, folds)
+            # each calibrated candidate refits the model calibration_cv times per fold
+            if self._fits(n_methods * (self.calibration_cv + 1) * winner_cost, 0.9):
+                final_model = self._select_calibration(evaluator, winning_trainer, folds)
+            else:
+                self.skipped_.append("calibration")
+                self.report_.add(
+                    "time_budget", "warn", "Calibration skipped: not enough time_budget left."
+                )
 
         # 5. Decision threshold from out-of-fold probabilities of the final model
         self.decision_threshold_ = self._select_threshold(evaluator, final_model, folds, task_type)
@@ -277,6 +334,84 @@ class ModelArena(BaseStep):
             + f"; decision threshold={self.decision_threshold_:.4f}",
         )
         return self
+
+    def _elapsed(self) -> float:
+        return time.perf_counter() - self._t0
+
+    def _fits(self, estimate: float, fraction: float = 1.0) -> bool:
+        """Whether a step costing ``estimate`` seconds ends within ``fraction`` of the budget."""
+        if self.time_budget is None:
+            return True
+        return self._elapsed() + estimate <= fraction * float(self.time_budget)
+
+    def _typical_cost(self) -> float:
+        """Mean CV wall time of the non-baseline candidates evaluated so far."""
+        costs = [v for k, v in getattr(self, "timings_", {}).items() if "Baseline" not in k]
+        return float(np.mean(costs)) if costs else 0.0
+
+    def _build_ensemble(
+        self, task_type: str, eval_scores: dict[str, tuple[float, Any]]
+    ) -> tuple[str, Any] | None:
+        """Soft-voting or stacking ensemble of the top-k candidates (by CV score).
+
+        It is cross-validated on the same folds as every other candidate, so it only wins
+        when it really generalises better.
+        """
+        from sklearn.ensemble import (
+            StackingClassifier,
+            StackingRegressor,
+            VotingClassifier,
+            VotingRegressor,
+        )
+        from sklearn.linear_model import LogisticRegression, RidgeCV
+
+        higher = task_type == "classification"
+        ranked = sorted(
+            (k for k in eval_scores if "Baseline" not in k),
+            key=lambda k: eval_scores[k][0],
+            reverse=higher,
+        )[: max(2, int(self.ensemble_top_k))]
+        if len(ranked) < 2:
+            self.report_.add(
+                "ensemble", "warn", "Ensembling needs at least two candidates; skipped."
+            )
+            return None
+        member_cost = sum(self.timings_.get(k, self._typical_cost()) for k in ranked)
+        kind = self.ensemble
+        # stacking refits every member 3x (internal CV) + 1x per fold; voting fits each once
+        if kind == "stack" and not self._fits(4.2 * member_cost, 0.8):
+            kind = "vote"
+            self.report_.add(
+                "time_budget", "warn", "Stacking would exceed time_budget; voting instead."
+            )
+        if kind == "vote" and not self._fits(1.1 * member_cost, 0.8):
+            self.skipped_.append("ensemble")
+            self.report_.add(
+                "time_budget", "warn", "Ensemble skipped: not enough time_budget left."
+            )
+            return None
+        members = [(f"m{i}", clone(eval_scores[k][1])) for i, k in enumerate(ranked)]
+        if task_type == "classification":
+            est: Any = (
+                VotingClassifier(members, voting="soft")
+                if kind == "vote"
+                else StackingClassifier(
+                    members,
+                    final_estimator=LogisticRegression(max_iter=1000),
+                    cv=3,
+                    stack_method="predict_proba",
+                )
+            )
+        else:
+            est = (
+                VotingRegressor(members)
+                if kind == "vote"
+                else StackingRegressor(members, final_estimator=RidgeCV(), cv=3)
+            )
+        self.ensemble_members_ = ranked
+        label = "Ensemble (vote)" if kind == "vote" else "Ensemble (stack)"
+        self.report_.add("ensemble", "ok", f"{label} of {ranked}")
+        return label, SklearnModelWrapper(est)
 
     @staticmethod
     def _record(name: str, res: dict[str, Any], task_type: str) -> dict[str, Any]:
@@ -319,6 +454,19 @@ class ModelArena(BaseStep):
         opts = dict(self.tuning or {})
         n_trials = int(opts.get("n_trials", 20))
         timeout = opts.get("timeout")
+        if self.time_budget is not None:
+            # a trial that starts before the timeout still runs to the end, and the best
+            # trial is re-evaluated once: keep two trial costs of slack, and leave the last
+            # 40% of the budget for ensembling, calibration and the final refit
+            per_trial = max(self._typical_cost(), 0.1)
+            remaining = 0.6 * self.time_budget - self._elapsed() - 2 * per_trial
+            if remaining < per_trial:
+                self.skipped_.append("tuning")
+                self.report_.add(
+                    "time_budget", "warn", "Tuning skipped: not enough time_budget left."
+                )
+                return []
+            timeout = remaining if timeout is None else min(float(timeout), remaining)
         spaces = tunable_models()
         keys = list(opts.get("models") or [])
         if not keys:
@@ -340,28 +488,59 @@ class ModelArena(BaseStep):
             if "handle_imbalance" in inspect.signature(cls).parameters:
                 base["handle_imbalance"] = self.handle_imbalance
 
+            trial_results: dict[int, tuple[dict[str, Any], float]] = {}
+
             def objective(
-                trial: Any, cls: Any = cls, space: Any = space, base: Any = base
+                trial: Any,
+                cls: Any = cls,
+                space: Any = space,
+                base: Any = base,
+                trial_results: dict[int, tuple[dict[str, Any], float]] = trial_results,
             ) -> float:
                 params = space(trial)
                 trial.set_user_attr("params", params)
-                return float(
-                    evaluator.evaluate_folds(cls(**base, **params), folds)["primary_score"]
-                )
+                t_start = time.perf_counter()
+                res = evaluator.evaluate_folds(cls(**base, **params), folds)
+                trial_results[trial.number] = (res, time.perf_counter() - t_start)
+                return float(res["primary_score"])
+
+            deadline = self._elapsed() + float(timeout) if timeout is not None else None
+
+            def stop_before_overrun(
+                study: Any,
+                trial: Any,
+                deadline: float | None = deadline,
+                trial_results: dict[int, tuple[dict[str, Any], float]] = trial_results,
+            ) -> None:
+                # a trial cannot be interrupted: stop when the slowest one so far would not
+                # finish before the deadline (Optuna's own timeout only checks between trials)
+                if deadline is None or not trial_results:
+                    return
+                slowest = max(sec for _, sec in trial_results.values())
+                if self._elapsed() + slowest > deadline:
+                    study.stop()
 
             study = optuna.create_study(
                 direction="maximize" if task_type == "classification" else "minimize",
                 sampler=optuna.samplers.TPESampler(seed=self.random_state),
             )
-            study.optimize(objective, n_trials=n_trials, timeout=timeout, catch=(Exception,))
+            study.optimize(
+                objective,
+                n_trials=n_trials,
+                timeout=timeout,
+                catch=(Exception,),
+                callbacks=[stop_before_overrun],
+            )
             completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
             if not completed:
                 self.report_.add("tuning", "warn", f"No successful trial for '{key}'.")
                 continue
             params = dict(study.best_trial.user_attrs["params"])
             model = cls(**base, **params)
-            res = evaluator.evaluate_folds(model, folds)
+            # the best trial already ran on these exact folds: reuse its CV result and cost
+            res, seconds = trial_results[study.best_trial.number]
             name = f"{self._key_to_label[key]} (tuned)"
+            self.timings_[name] = seconds
             self.tuned_params_[name] = params
             self.report_.add(
                 "tuning",
@@ -433,6 +612,15 @@ class ModelArena(BaseStep):
             return float(self.threshold)
         if self.threshold not in ("f1", "youden"):
             raise ValueError("threshold must be a float in (0, 1), 'f1' or 'youden'")
+        cost = self.timings_.get(self.best_model_name_, self._typical_cost())
+        if self.calibration_:
+            cost *= self.calibration_cv + 1
+        if not self._fits(cost, 0.95):
+            self.skipped_.append("threshold")
+            self.report_.add(
+                "time_budget", "warn", "Threshold tuning skipped (time_budget); using 0.5."
+            )
+            return 0.5
         oof: list[tuple[np.ndarray, np.ndarray]] = []
         evaluator.evaluate_folds(model, folds, oof=oof)
         if not oof:

@@ -114,6 +114,9 @@ class ProfileOptions:
     leading_zero_share: float = 0.05
     sample_size: int = 2000
     random_state: int = 0
+    #: above this many rows, per-column statistics come from a uniform row sample of this size
+    #: (row count, missing rates and duplicate rows stay exact); ``None`` = always all rows
+    max_rows: int | None = 1_000_000
     overrides: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -169,6 +172,8 @@ class DatasetProfile:
     columns: dict[str, ColumnProfile]
     target: TargetProfile | None = None
     duplicate_names: list[str] = field(default_factory=list)
+    #: rows used for per-column statistics when the frame exceeded ``ProfileOptions.max_rows``
+    sampled_rows: int | None = None
 
     def columns_of(self, *types: str) -> list[str]:
         return [c for c, p in self.columns.items() if p.semantic_type in types]
@@ -206,6 +211,7 @@ class DatasetProfile:
             "n_duplicate_rows": self.n_duplicate_rows,
             "duplicate_columns": self.duplicate_columns,
             "duplicate_names": self.duplicate_names,
+            "sampled_rows": self.sampled_rows,
             "columns": {c: p.to_dict() for c, p in self.columns.items()},
             "target": None if self.target is None else asdict(self.target),
         }
@@ -643,6 +649,16 @@ def _duplicate_columns(df: pd.DataFrame) -> list[list[str]]:
     return groups
 
 
+def _count_duplicate_rows(df: pd.DataFrame, hashed: bool = False) -> int:
+    """Exact duplicate-row count; on big frames via one 64-bit hash per row (much faster)."""
+    try:
+        if hashed:
+            return int(pd.util.hash_pandas_object(df, index=False).duplicated().sum())
+        return int(df.duplicated().sum())
+    except (TypeError, ValueError):
+        return int(df.astype(str).duplicated().sum())
+
+
 def deduplicate_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     """Keep the first of several columns sharing a name (also ``1`` vs ``"1"``).
 
@@ -665,23 +681,43 @@ def profile_dataframe(
     duplicate column names keep their first occurrence, unanalysable columns are 'unsupported'."""
     opts = options or ProfileOptions()
     df, dup_names = deduplicate_columns(df)
+    n_rows = len(df)
+    big = opts.max_rows is not None and n_rows > opts.max_rows
+    work = df.sample(opts.max_rows, random_state=opts.random_state) if big else df
+    n_dup = _count_duplicate_rows(df, hashed=big) if len(df.columns) else 0
     try:
-        n_dup = int(df.duplicated().sum()) if len(df.columns) else 0
-    except (TypeError, ValueError):
-        n_dup = int(df.astype(str).duplicated().sum())
-    try:
-        memory = float(df.memory_usage(deep=True).sum() / 1e6)
+        memory = float(work.memory_usage(deep=True).sum() / 1e6) * (n_rows / max(len(work), 1))
     except (TypeError, ValueError):
         memory = float("nan")
     by_name = {str(c): c for c in df.columns}
+    columns = {name: infer_column(work[col], name, opts) for name, col in by_name.items()}
+    dup_cols = _duplicate_columns(work) if len(df.columns) else []
+    if big:
+        # exact missing counts on all rows (disguised tokens are only seen in the sample)
+        exact = df.isna().sum()
+        for name, col in by_name.items():
+            p = columns[name]
+            rate = max(float(exact[col]) / n_rows, p.missing_rate)
+            p.missing_rate, p.n_missing = rate, int(round(rate * n_rows))
+            p.notes.append(f"statistics from a {len(work):,}-row sample of {n_rows:,}")
+        # columns identical in the sample must also be identical on all rows
+        dup_cols = [
+            grp
+            for grp in (
+                [g[0]] + [c for c in g[1:] if df[by_name[c]].equals(df[by_name[g[0]]])]
+                for g in dup_cols
+            )
+            if len(grp) > 1
+        ]
     prof = DatasetProfile(
-        n_rows=len(df),
+        n_rows=n_rows,
         n_cols=len(df.columns),
         memory_mb=memory,
         n_duplicate_rows=n_dup,
-        duplicate_columns=_duplicate_columns(df) if len(df.columns) else [],
-        columns={name: infer_column(df[col], name, opts) for name, col in by_name.items()},
+        duplicate_columns=dup_cols,
+        columns=columns,
         duplicate_names=dup_names,
+        sampled_rows=len(work) if big else None,
     )
     if y is not None:
         y_s = y if isinstance(y, pd.Series) else pd.Series(np.asarray(y), name="target")

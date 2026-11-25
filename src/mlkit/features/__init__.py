@@ -9,6 +9,7 @@ from mlkit.features.engineering import (
     MultiTableAggregator,
     RatioFeatures,
 )
+from mlkit.features.relational import PointInTimeAggregator, point_in_time_features
 from mlkit.features.temporal import TemporalSpec, build_features, build_labels, build_panel
 from mlkit.features.text import TextFeatures
 
@@ -17,10 +18,12 @@ __all__ = [
     "DatetimeFeatures",
     "GroupAggFeatures",
     "MultiTableAggregator",
+    "PointInTimeAggregator",
     "RatioFeatures",
     "TemporalSpec",
     "TextFeatures",
     "build_features",
     "build_labels",
     "build_panel",
+    "point_in_time_features",
 ]

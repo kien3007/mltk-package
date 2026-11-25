@@ -432,7 +432,12 @@ class QualityCheckStep(BaseStep):
         # 9. Target
         if y_s is not None:
             self._check_target(prof, cfg)
-            self._check_leakage(X, y_s, prof)
+            # forecasting lag features are built from strictly past targets (ADR-010): they are
+            # expected to correlate with the target and are not leakage
+            exempt = (
+                f"{cfg.target}__" if cfg is not None and getattr(cfg, "forecasting", None) else None
+            )
+            self._check_leakage(X, y_s, prof, exempt_prefix=exempt)
 
         # 10. Overall Data Quality Score (0 - 100)
         self._score(X, prof, dup_pct, constant)
@@ -495,7 +500,9 @@ class QualityCheckStep(BaseStep):
                 {"minority_share": t.minority_share},
             )
 
-    def _check_leakage(self, X: pd.DataFrame, y: pd.Series, prof: DatasetProfile) -> None:
+    def _check_leakage(
+        self, X: pd.DataFrame, y: pd.Series, prof: DatasetProfile, exempt_prefix: str | None = None
+    ) -> None:
         t = prof.target
         if t is None or t.kind in ("empty", "constant"):
             return
@@ -506,6 +513,8 @@ class QualityCheckStep(BaseStep):
         warn_values: list[tuple[str, float]] = []
         warn_missing: list[tuple[str, float]] = []
         for c, p in prof.columns.items():
+            if exempt_prefix and c.startswith(exempt_prefix):
+                continue
             if p.semantic_type in (
                 "empty",
                 "constant",

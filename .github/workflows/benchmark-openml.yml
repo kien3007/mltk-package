@@ -25,8 +25,15 @@ jobs:
         env:
           MPLBACKEND: Agg
         run: uv run mlkit benchmark --suite openml --out openml-results.csv
+      - name: Run forecasting suite (incl. OpenML bike sharing and CO2)
+        if: always()
+        env:
+          MPLBACKEND: Agg
+        run: uv run mlkit benchmark --suite timeseries --no-eda --out timeseries-results.csv
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: openml-results
-          path: openml-results.csv
+          path: |
+            openml-results.csv
+            timeseries-results.csv

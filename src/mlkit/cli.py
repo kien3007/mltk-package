@@ -98,8 +98,24 @@ def cmd_predict(
     out_path: str | None = None,
     threshold: float | None = None,
     explain: int = 0,
+    chunksize: int | None = None,
 ) -> int:
-    """Score a batch file with a saved bundle."""
+    """Score a batch file with a saved bundle (``chunksize``: stream a large file)."""
+    if chunksize:
+        if not out_path:
+            logger.error("--chunksize needs --out (.csv or .parquet)")
+            return 1
+        from mlkit.runner import predict_file
+
+        try:
+            n = predict_file(
+                bundle_path, data_path, out_path, chunksize, threshold=threshold, explain=explain
+            )
+        except (MLKitError, FileNotFoundError, ValueError) as exc:
+            logger.error("%s: %s", type(exc).__name__, exc)
+            return 1
+        logger.info("Wrote %d predictions to %s", n, out_path)
+        return 0
     try:
         preds = predict_bundle(
             bundle_path, read_table(data_path), threshold=threshold, explain=explain
@@ -250,8 +266,14 @@ def cmd_benchmark(
     """Run a generality suite (synthetic or openml); exit 1 if any expectation fails."""
     import pandas as pd
 
-    from mlkit.benchmarks import run_suite
+    from mlkit.benchmarks import run_scale, run_suite
 
+    if suite == "scale":
+        row = run_scale()
+        print(row)
+        if out_path:
+            write_table(pd.DataFrame([row]), out_path)
+        return 0 if row["passed"] else 1
     try:
         res = run_suite(cases, with_eda=with_eda, suite=suite)
     except ValueError as exc:
@@ -308,6 +330,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="K",
         help="Add the top-K reasons per row (reason_i, reason_i_impact)",
     )
+    pred_p.add_argument(
+        "--chunksize",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Stream the input N rows at a time (large files; needs --out .csv/.parquet)",
+    )
 
     mon_p = sub.add_parser("monitor", help="Check a batch for drift against a saved bundle")
     mon_p.add_argument("bundle")
@@ -358,9 +387,10 @@ def build_parser() -> argparse.ArgumentParser:
     bm_p = sub.add_parser("benchmark", help="Run the multi-dataset generality suite")
     bm_p.add_argument(
         "--suite",
-        choices=["synthetic", "openml"],
+        choices=["synthetic", "openml", "timeseries", "scale"],
         default="synthetic",
-        help="synthetic (offline, default) or openml (downloads 15 public datasets)",
+        help="synthetic (offline, default), openml (15 public datasets), timeseries "
+        "(forecasting) or scale (profile 10M x 50 rows: time and memory)",
     )
     bm_p.add_argument("--case", action="append", help="Run only this case (repeatable)")
     bm_p.add_argument("--no-eda", action="store_true", help="Skip the EDA/report part of each case")
@@ -388,6 +418,7 @@ def main(argv: list[str] | None = None) -> None:
             out_path=args.out,
             threshold=args.threshold,
             explain=args.explain,
+            chunksize=args.chunksize,
         )
     elif args.command == "monitor":
         code = cmd_monitor(args.bundle, args.data, out_path=args.out, fail_on=args.fail_on)

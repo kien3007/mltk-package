@@ -4,13 +4,22 @@ from __future__ import annotations
 
 import pytest
 
-from mlkit.benchmarks import CASES, run_case
+from mlkit.benchmarks import CASES, TIMESERIES_CASES, run_case
+
+OFFLINE_TS = [c for c in TIMESERIES_CASES if not c.online]
 
 
 @pytest.mark.benchmark
 @pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
 def test_benchmark_case(case):
     row = run_case(case)
+    assert row["passed"], row["detail"]
+
+
+@pytest.mark.benchmark
+@pytest.mark.parametrize("case", OFFLINE_TS, ids=[c.name for c in OFFLINE_TS])
+def test_forecasting_case_beats_seasonal_naive(case):
+    row = run_case(case, with_eda=False)
     assert row["passed"], row["detail"]
 
 
