@@ -58,14 +58,22 @@ class TestTargetEncodingLeakage:
         assert not np.allclose(train_out["hc"].to_numpy(), full_out["hc"].to_numpy())
         assert enc._y_numeric is None  # training target not kept on the fitted object
 
-    def test_multiclass_falls_back_to_frequency(self):
+    def test_multiclass_uses_per_class_target_encoding(self):
         from mlkit.preprocessing import CategoricalEncoder
 
         X = _high_card_frame(600, 100)
         y = rng.choice(["a", "b", "c"], len(X))
-        enc = CategoricalEncoder(low_card_threshold=5, high_card_threshold=20).fit(X, y)
-        assert enc.encoding_plan_["hc"] == "frequency"  # no meaningful target encoding
-        assert enc.report_.has_warnings
+        enc = CategoricalEncoder(low_card_threshold=5, high_card_threshold=20)
+        train_out = enc.fit_transform(X, y)
+        assert enc.encoding_plan_["hc"] == "target_mc"  # v0.4: K-1 smoothed encodings, out-of-fold
+        assert {"hc__te1", "hc__te2"} <= set(train_out.columns) and "hc" not in train_out
+        assert not np.allclose(
+            train_out["hc__te1"], enc.transform(X)["hc__te1"]
+        )  # OOF on train rows
+        too_many = CategoricalEncoder(low_card_threshold=5).fit(
+            X, rng.integers(0, 30, len(X)).astype(str)
+        )
+        assert too_many.encoding_plan_["hc"] == "frequency" and too_many.report_.has_warnings
 
     def test_refit_does_not_accumulate_state(self):
         from mlkit.preprocessing import CategoricalEncoder, MissingImputer, TypeCaster

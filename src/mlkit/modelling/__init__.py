@@ -20,7 +20,15 @@ from mlkit.modelling.trainers import (
     SklearnModelWrapper,
     XGBTrainer,
 )
-from mlkit.modelling.tuning import LGBM_SPACE, LINEAR_SPACE, RF_SPACE, OptunaSearch
+from mlkit.modelling.tuning import (
+    EXTRA_TREES_SPACE,
+    HIST_GB_SPACE,
+    LGBM_SPACE,
+    LINEAR_SPACE,
+    RF_SPACE,
+    XGB_SPACE,
+    OptunaSearch,
+)
 
 __all__ = [
     "CVEvaluator",
@@ -28,7 +36,10 @@ __all__ = [
     "DummyTrainer",
     "ExtraTreesTrainer",
     "HistGBTrainer",
+    "EXTRA_TREES_SPACE",
+    "HIST_GB_SPACE",
     "LGBM_SPACE",
+    "XGB_SPACE",
     "LGBMTrainer",
     "LINEAR_SPACE",
     "LinearTrainer",

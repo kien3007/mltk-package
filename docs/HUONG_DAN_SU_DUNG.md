@@ -22,7 +22,7 @@ Mỗi công đoạn có một bảng tra cứu và một ví dụ ngắn chạy 
 | 9 | Đánh giá | `mlkit.modelling` | `compute_metrics`, `CVEvaluator`, `compute_bootstrap_ci`, ... | |
 | 10 | Ghép pipeline và chạy trọn gói | `mlkit.core`, `mlkit.runner` | `Pipeline`, `train`, `build_default_pipeline` | `mlkit run` |
 | 11 | Đóng gói | `mlkit.core` | `save_bundle`, `load_bundle` | (tự động trong `mlkit run`) |
-| 12 | Dự đoán | `mlkit.runner` | `predict_bundle`, `predict_frame` | `mlkit predict` |
+| 12 | Dự đoán và giải thích | `mlkit.runner`, `mlkit.explain` | `predict_bundle`, `explain_frame`, `permutation_importance` | `mlkit predict [--explain]` |
 | 13 | Giám sát và đánh giá sau triển khai | `mlkit.monitoring`, `mlkit.runner` | `DriftMonitor`, `monitor_bundle`, `evaluate_bundle` | `mlkit monitor`, `mlkit evaluate` |
 | 14 | Phục vụ API, ghi log thí nghiệm | `mlkit.serving`, `mlkit.tracking` | `create_app`, `log_to_mlflow` | `mlkit serve` |
 | 15 | Mở rộng và kiểm tra | `mlkit.core`, `mlkit.benchmarks` | `BaseStep`, `register`, `run_suite` | `mlkit steps`, `mlkit benchmark` |
@@ -229,7 +229,7 @@ Thứ tự khuyến nghị: `TypeCaster` → (`DatetimeFeatures`, `TextFeatures`
 | `TypeCaster` | Chuyển kiểu theo profile. Số/ngày/Yes-No lưu dạng chữ được chuyển thành kiểu thật; `"n/a"` và `inf` thành NaN. **Loại** cột ID, rỗng, hằng, trùng, `ignore`, `id_col`/`group_col`/`time_col` (dạng số). | `drop_id=True`, `drop_cols=[...]`, `dtypes={"col": "category"}` (ép kiểu), `profile_options` (chỉ định kiểu), `drop_constant`, `drop_duplicate_columns` | `drop_reasons_`, `inferred_dtypes_`, `semantic_types_` |
 | `MissingImputer` | Điền giá trị thiếu | `numeric_strategy` (`median`/`mean`/`zero`), `categorical_strategy` (`mode`/`missing_value`), `add_indicator` (`True`/`False`/`"auto"`: tạo cột `<col>_is_missing` cho cột thiếu ≥ `indicator_min_rate`) | `fill_values_`, `indicator_cols_` |
 | `RareCategoryGrouper` | Gộp category hiếm thành `__rare__` | `min_freq` (tỉ lệ), `min_count` (số dòng), `max_cardinality` (bỏ qua cột nhiều giá trị hơn) | `frequent_categories_` |
-| `CategoricalEncoder` | Mã hóa category: one-hot (≤ `low_card_threshold`), target encoding **out-of-fold** (nhiều hơn, khi có target), frequency (khi không có target), ordinal (khi chỉ định) | `low_card_threshold=10`, `high_card_threshold=50`, `mid_card_strategy="target"`, `strategies={"col": "ordinal"\|"frequency"\|"target"\|"onehot"}`, `smoothing=10` | `encoding_plan_` |
+| `CategoricalEncoder` | Mã hóa category: one-hot (≤ `low_card_threshold`), target encoding **out-of-fold** (nhiều hơn, khi có target; với nhiều lớp: K-1 cột `<col>__te<k>`, mỗi lớp một cột), frequency (khi không có target), ordinal (khi chỉ định) | `low_card_threshold=10`, `high_card_threshold=50`, `mid_card_strategy="target"`, `strategies={"col": "ordinal"\|"frequency"\|"target"\|"onehot"}`, `smoothing=10` | `encoding_plan_` |
 | `FeatureScaler` | Chuẩn hóa cột số | `method` (`standard`/`robust`/`minmax`) | `numeric_cols_` |
 | `OutlierClipper` | Cắt ngoại lai theo IQR | `factor=1.5` | `bounds_` |
 
@@ -334,7 +334,7 @@ print(sel.selected_features_)
 
 | Hàm / class | Dùng để | Tham số chính | Trả về / thuộc tính |
 |---|---|---|---|
-| `ModelArena` | **So sánh nhiều mô hình bằng CV** với mô hình ngây thơ; chọn mô hình thắng; tùy chọn hiệu chuẩn xác suất và chọn ngưỡng; fit mô hình thắng trên toàn bộ dữ liệu | `cv=5`, `candidates=["linear", "random_forest", "lightgbm", "xgboost", "hist_gb", "extra_trees"]` (mặc định: 3 mô hình đầu), `models={"tên": estimator}` (thêm mô hình riêng), `handle_imbalance=True`, `calibration=None\|"sigmoid"\|"isotonic"\|"auto"`, `threshold=0.5\|"f1"\|"youden"`, `enforce_baseline_gate=True` | `best_model_name_`, `best_estimator_`, `comparison_table_`, `cv_results_`, `decision_threshold_`, `calibration_`; `predict`, `predict_proba` |
+| `ModelArena` | **So sánh nhiều mô hình bằng CV** với mô hình ngây thơ; chọn mô hình thắng; tùy chọn hiệu chuẩn xác suất và chọn ngưỡng; fit mô hình thắng trên toàn bộ dữ liệu | `cv=5`, `candidates=["linear", "random_forest", "lightgbm", "xgboost", "hist_gb", "extra_trees"]` (mặc định: 3 mô hình đầu), `models={"tên": estimator}` (thêm mô hình riêng), `handle_imbalance=True`, `calibration=None\|"sigmoid"\|"isotonic"\|"auto"`, `threshold=0.5\|"f1"\|"youden"`, `tuning={"n_trials": 20, "timeout": giây, "models": [...]}` (tối ưu siêu tham số bằng Optuna trên chính các fold CV; mặc định tối ưu mô hình tốt nhất; cần extra `tuning`), `enforce_baseline_gate=True` | `best_model_name_`, `best_estimator_`, `comparison_table_`, `cv_results_`, `decision_threshold_`, `calibration_`, `tuned_params_`; `predict`, `predict_proba` |
 | `LinearTrainer` | Logistic regression (phân loại) / Ridge (hồi quy) | `C`, `handle_imbalance`, `task_type` | mô hình kiểu sklearn |
 | `RandomForestTrainer` | Random Forest | `n_estimators`, `max_depth`, `handle_imbalance`, `n_jobs` | |
 | `LGBMTrainer` | LightGBM | `n_estimators`, `learning_rate`, `num_leaves`, `handle_imbalance`, `**kwargs` (mọi tham số của LightGBM) | |
@@ -360,7 +360,8 @@ cfg = TaskConfig(target="class")
 y, _ = prepare_target(df["class"], cfg)
 X = CategoricalEncoder().fit_transform(MissingImputer().fit_transform(TypeCaster().fit_transform(df.drop(columns="class"))), y)
 
-arena = ModelArena(cv=3, candidates=["linear", "lightgbm"], handle_imbalance=False, threshold="f1")
+arena = ModelArena(cv=3, candidates=["linear", "lightgbm"], handle_imbalance=False, threshold="f1",
+                   tuning={"n_trials": 5, "models": ["lightgbm"]})   # thêm "LightGBM (tuned)" vào cuộc so sánh
 arena.fit(X, y, cfg=cfg)
 print(arena.comparison_table_)
 print(arena.best_model_name_, arena.decision_threshold_)
@@ -493,6 +494,36 @@ print(predict_frame(pipeline, cfg, metadata, new, threshold=0.3)[["score", "pred
 
 ---
 
+## 12b. Giải thích dự đoán (`mlkit.explain`)
+
+| Hàm | Dùng để | Tham số chính | Trả về |
+|---|---|---|---|
+| `explain_frame(pipeline, X, task_type, top_k=3, method="auto")` | Top-k lý do cho **từng dòng**: cột đầu vào nào đẩy dự đoán lên hoặc xuống. Đóng góp của one-hot, phần ngày, cờ thiếu được cộng về cột gốc. | `method`: `auto` (tuyến tính → hệ số; cây → SHAP nếu có cài; còn lại → ablation), `linear`, `shap`, `ablation` | `DataFrame`: `reason_i`, `reason_i_impact` (có dấu); `.attrs["method"]` |
+| `feature_contributions(pipeline, X, task_type, method)` | Ma trận đóng góp đầy đủ (dòng × cột gốc) | như trên | `(DataFrame, phương pháp)` |
+| `permutation_importance(pipeline, X, y, task_type, n_repeats=5)` | Mức giảm điểm (AUC hoặc R²) khi xáo trộn một cột gốc, chạy lại toàn pipeline | `y` đã mã hóa như lúc train (`prepare_target`) | `DataFrame`: `feature`, `importance_mean`, `importance_std` |
+| `predict_bundle(..., explain=k)` / `mlkit predict --explain k` / `POST /predict {"explain": k}` | Kèm lý do vào kết quả dự đoán | | thêm cột `reason_*` |
+
+Đơn vị của `impact`:
+- phương pháp `linear`: log-odds (phân loại) hoặc đơn vị của target (hồi quy);
+- `shap`: theo đầu ra của mô hình;
+- `ablation`: xác suất, hoặc giá trị dự đoán.
+
+```python
+from mlkit.core import load_bundle
+from mlkit.explain import explain_frame, permutation_importance
+from mlkit.runner import predict_bundle, prepare_target, read_table
+
+df = read_table("examples/data/adult.csv").sample(1500, random_state=1)
+pipeline, cfg, metadata = load_bundle("artifacts/guide/adult")
+X = df.drop(columns="class")
+print(explain_frame(pipeline, X.head(5), top_k=3))
+print(predict_bundle("artifacts/guide/adult", X.head(3), explain=2)[["score", "reason_1", "reason_1_impact"]])
+y, _ = prepare_target(df["class"], cfg)
+print(permutation_importance(pipeline, X, y, n_repeats=2).head())
+```
+
+---
+
 ## 13. Giám sát và đánh giá sau triển khai
 
 | Hàm / class | Dùng để | Tham số chính | Trả về |
@@ -604,7 +635,7 @@ print(run_suite(["leaky_feature"], with_eda=False)[["case", "passed"]])
 |---|---|---|
 | `mlkit eda DATA --target T --out F.html [--type C=K]` | 1–4 | `run_eda(...).to_html(...)` |
 | `mlkit run CONFIG --out DIR [--html-report F]` | 0, 5–11 | `train(cfg, df, output_dir=...)` |
-| `mlkit predict BUNDLE DATA [--out F] [--threshold T]` | 12 | `predict_bundle(...)` |
+| `mlkit predict BUNDLE DATA [--out F] [--threshold T] [--explain K]` | 12 | `predict_bundle(..., explain=K)` |
 | `mlkit monitor BUNDLE DATA [--out F] [--fail-on warn]` | 13 | `monitor_bundle(...)` |
 | `mlkit evaluate BUNDLE DATA [--by COL] [--out F]` | 13 | `evaluate_bundle(...)` |
 | `mlkit serve BUNDLE [--port P]` | 14 | `create_app(...)` |

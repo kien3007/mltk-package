@@ -408,7 +408,10 @@ class CategoricalEncoder(BaseStep):
         self.ordinal_maps_: dict[str, dict[str, int]] = {}  # category -> code
         self.target_maps_: dict[str, dict[str, float]] = {}
         self.global_target_mean_: float = 0.0
+        self.class_maps_: dict[str, list[dict[str, float]]] = {}
+        self.class_priors_: list[float] = []
         self._y_numeric: np.ndarray | None = None
+        self._y_codes: np.ndarray | None = None
 
     @staticmethod
     def _target_to_numeric(y: Any) -> np.ndarray | None:
@@ -447,6 +450,8 @@ class CategoricalEncoder(BaseStep):
         self.ordinal_maps_ = {}
         self.target_maps_ = {}
         self.frequency_maps_ = {}
+        self.class_maps_ = {}
+        self.class_priors_ = []
         valid = {"onehot", "ordinal", "target", "frequency"}
         overrides = dict(self.strategies or {})
         bad = {k: v for k, v in overrides.items() if v not in valid}
@@ -458,13 +463,20 @@ class CategoricalEncoder(BaseStep):
         y_num = self._target_to_numeric(y) if y is not None else None
         if cfg is not None and cfg.task_type == "regression" and y is not None:
             y_num = np.asarray(y, dtype=float)
+        y_codes = None
         if y is not None and y_num is None:
-            self.report_.add(
-                "categorical_encoder_target",
-                "warn",
-                "Target is multiclass/non-numeric; target encoding disabled (ordinal fallback).",
-            )
+            codes, uniques = pd.factorize(pd.Series(np.asarray(y)).astype(str), sort=True)
+            if 2 < len(uniques) <= 20 and (codes >= 0).all():
+                y_codes = codes  # multiclass: one smoothed target encoding per class
+                self.class_priors_ = [float(np.mean(codes == k)) for k in range(len(uniques))]
+            else:
+                self.report_.add(
+                    "categorical_encoder_target",
+                    "warn",
+                    "Target unsuitable for target encoding (non-numeric or > 20 classes); frequency fallback.",
+                )
         self._y_numeric = y_num
+        self._y_codes = y_codes
         self.global_target_mean_ = float(np.nanmean(y_num)) if y_num is not None else 0.0
 
         for col in cat_cols:
@@ -478,7 +490,7 @@ class CategoricalEncoder(BaseStep):
             else:
                 strategy = "target"
             if strategy == "target" and y_num is None:
-                strategy = "frequency"
+                strategy = "target_mc" if y_codes is not None else "frequency"
 
             keys = X[col].astype(str)
             if strategy == "onehot":
@@ -490,6 +502,12 @@ class CategoricalEncoder(BaseStep):
                 self.frequency_maps_[col] = {
                     str(k): float(v) for k, v in keys.value_counts(normalize=True).items()
                 }
+            elif strategy == "target_mc":
+                assert y_codes is not None
+                self.class_maps_[col] = [
+                    self._smoothed_map(keys, (y_codes == k).astype(float), self.class_priors_[k])
+                    for k in range(1, len(self.class_priors_))  # class 0 is implied (sums to 1)
+                ]
             else:
                 assert y_num is not None  # target strategy falls back to frequency without a target
                 self.target_maps_[col] = self._smoothed_map(keys, y_num, self.global_target_mean_)
@@ -504,9 +522,10 @@ class CategoricalEncoder(BaseStep):
 
     def _fit_transform_train(self, X: pd.DataFrame, y: Any) -> pd.DataFrame | None:
         target_cols = [c for c, s in self.encoding_plan_.items() if s == "target"]
-        y_num = self._y_numeric
-        self._y_numeric = None  # never persist the training target inside a bundle
-        if not target_cols or y_num is None:
+        mc_cols = [c for c, s in self.encoding_plan_.items() if s == "target_mc"]
+        y_num, y_codes = self._y_numeric, self._y_codes
+        self._y_numeric = self._y_codes = None  # never persist the training target inside a bundle
+        if not (target_cols and y_num is not None) and not (mc_cols and y_codes is not None):
             return None
 
         from sklearn.model_selection import KFold
@@ -514,12 +533,26 @@ class CategoricalEncoder(BaseStep):
         out = self.transform(X)
         n_splits = max(2, min(self.cv, len(X)))
         kf = KFold(n_splits=n_splits, shuffle=True, random_state=self.random_state)
-        for col in target_cols:
+        codes = np.asarray(y_codes) if y_codes is not None else None
+        for col in mc_cols if codes is not None else []:
+            keys = X[col].astype(str).reset_index(drop=True)
+            for k in range(1, len(self.class_priors_)):
+                yk = (np.asarray(codes) == k).astype(float)
+                oof = np.full(len(X), np.nan)
+                for tr_idx, val_idx in kf.split(keys):
+                    prior = float(yk[tr_idx].mean())
+                    fold_map = self._smoothed_map(keys.iloc[tr_idx], yk[tr_idx], prior)
+                    oof[val_idx] = (
+                        keys.iloc[val_idx].map(fold_map).astype(float).fillna(prior).to_numpy()
+                    )
+                out[f"{col}__te{k}"] = oof
+        y_arr = np.asarray(y_num, dtype=float) if y_num is not None else np.array([])
+        for col in target_cols if y_num is not None else []:
             keys = X[col].astype(str).reset_index(drop=True)
             oof = np.full(len(X), np.nan)
             for tr_idx, val_idx in kf.split(keys):
-                prior = float(np.nanmean(y_num[tr_idx]))
-                fold_map = self._smoothed_map(keys.iloc[tr_idx], y_num[tr_idx], prior)
+                prior = float(np.nanmean(y_arr[tr_idx]))
+                fold_map = self._smoothed_map(keys.iloc[tr_idx], y_arr[tr_idx], prior)
                 oof[val_idx] = (
                     keys.iloc[val_idx].map(fold_map).astype(float).fillna(prior).to_numpy()
                 )
@@ -565,6 +598,14 @@ class CategoricalEncoder(BaseStep):
                     .astype(float)
                     .fillna(0.0)
                 )
+
+            elif strategy == "target_mc":
+                keys = out[col].astype(str)
+                for k, cmap in enumerate(self.class_maps_.get(col, []), start=1):
+                    out[f"{col}__te{k}"] = (
+                        keys.map(cmap).astype(float).fillna(self.class_priors_[k])
+                    )
+                out.drop(columns=[col], inplace=True)
 
             elif strategy == "target":
                 te_map = self.target_maps_.get(col, {})

@@ -77,6 +77,60 @@ def LINEAR_SPACE(trial: Any) -> dict[str, Any]:
     }
 
 
+def EXTRA_TREES_SPACE(trial: Any) -> dict[str, Any]:
+    """Default Optuna search space for ExtraTrees."""
+    return {
+        "n_estimators": trial.suggest_int("n_estimators", 100, 500, step=50),
+        "min_samples_leaf": trial.suggest_int("min_samples_leaf", 1, 20),
+        "max_features": trial.suggest_categorical("max_features", ["sqrt", "log2", 0.5, 1.0]),
+    }
+
+
+def HIST_GB_SPACE(trial: Any) -> dict[str, Any]:
+    """Default Optuna search space for HistGradientBoosting."""
+    return {
+        "max_iter": trial.suggest_int("max_iter", 100, 600, step=50),
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        "max_leaf_nodes": trial.suggest_int("max_leaf_nodes", 15, 127),
+        "min_samples_leaf": trial.suggest_int("min_samples_leaf", 10, 100),
+        "l2_regularization": trial.suggest_float("l2_regularization", 1e-4, 10.0, log=True),
+    }
+
+
+def XGB_SPACE(trial: Any) -> dict[str, Any]:
+    """Default Optuna search space for XGBoost."""
+    return {
+        "n_estimators": trial.suggest_int("n_estimators", 100, 600, step=50),
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        "max_depth": trial.suggest_int("max_depth", 3, 10),
+        "subsample": trial.suggest_float("subsample", 0.5, 1.0),
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+        "min_child_weight": trial.suggest_float("min_child_weight", 1.0, 10.0, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 1e-3, 10.0, log=True),
+    }
+
+
+def tunable_models() -> dict[str, tuple[type, Callable[[Any], dict[str, Any]]]]:
+    """Arena candidate key -> (trainer class, default search space)."""
+    from mlkit.modelling.trainers import (
+        ExtraTreesTrainer,
+        HistGBTrainer,
+        LGBMTrainer,
+        LinearTrainer,
+        RandomForestTrainer,
+        XGBTrainer,
+    )
+
+    return {
+        "linear": (LinearTrainer, LINEAR_SPACE),
+        "random_forest": (RandomForestTrainer, RF_SPACE),
+        "lightgbm": (LGBMTrainer, LGBM_SPACE),
+        "extra_trees": (ExtraTreesTrainer, EXTRA_TREES_SPACE),
+        "hist_gb": (HistGBTrainer, HIST_GB_SPACE),
+        "xgboost": (XGBTrainer, XGB_SPACE),
+    }
+
+
 # ---------------------------------------------------------------------------
 # OptunaSearch
 # ---------------------------------------------------------------------------

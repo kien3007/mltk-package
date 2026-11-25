@@ -33,6 +33,7 @@ def create_app(bundle_path: str | Path) -> Any:
     class PredictRequest(BaseModel):
         records: list[dict[str, Any]] = Field(..., min_length=1)
         threshold: float | None = Field(None, ge=0.0, le=1.0)  # None => bundle threshold
+        explain: int = Field(0, ge=0, le=20)  # top-K reasons per row
 
     class MonitorRequest(BaseModel):
         records: list[dict[str, Any]] = Field(..., min_length=1)
@@ -62,7 +63,9 @@ def create_app(bundle_path: str | Path) -> Any:
     def predict(req: PredictRequest) -> dict[str, Any]:
         df = pd.DataFrame.from_records(req.records)
         try:
-            out = predict_frame(pipeline, cfg, metadata, df, threshold=req.threshold)
+            out = predict_frame(
+                pipeline, cfg, metadata, df, threshold=req.threshold, explain=req.explain
+            )
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"predictions": out.to_dict(orient="records")}
