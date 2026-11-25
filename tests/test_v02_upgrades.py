@@ -311,8 +311,16 @@ class TestRunner:
             pd.Series(["no", "yes"]), TaskConfig(target="label", modelling={"positive_label": "no"})
         )
         assert y.tolist() == [1, 0]
-        with pytest.raises(ValidationError, match="binary"):
-            prepare_target(pd.Series(["a", "b", "c"]), cfg)
+        y, info = prepare_target(pd.Series(["b", "a", "c", "a"]), cfg)  # multiclass -> sorted codes
+        assert y.tolist() == [1, 0, 2, 0] and info["label_map"] == {"a": 0, "b": 1, "c": 2}
+        y, info = prepare_target(pd.Series([10, 2, 2, 5]), cfg)  # numeric labels sort numerically
+        assert y.tolist() == [2, 0, 0, 1] and info["n_classes"] == 3
+        with pytest.raises(ValidationError, match="max_classes"):
+            prepare_target(
+                pd.Series(list("abcd")), TaskConfig(target="label", modelling={"max_classes": 3})
+            )
+        with pytest.raises(ValidationError, match="single class"):
+            prepare_target(pd.Series(["a", "a"]), cfg)
         with pytest.raises(ValidationError, match="missing"):
             prepare_target(pd.Series(["a", None]), cfg)
 

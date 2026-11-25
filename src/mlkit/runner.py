@@ -177,9 +177,20 @@ def build_pipeline_from_config(cfg: TaskConfig) -> Pipeline:
 
 
 # ----------------------------------------------------------------- target / split
+def _label_key(value: Any) -> str:
+    """Canonical text form of a class label (shared by training and evaluation)."""
+    return str(value).strip().rstrip(".")
+
+
 def prepare_target(y: pd.Series, cfg: TaskConfig) -> tuple[pd.Series, dict[str, Any]]:
-    """Normalise the target. Binary string labels are mapped to 0/1 (positive = sorted last
-    or ``cfg.modelling['positive_label']``). Returns ``(y, target_info)``."""
+    """Normalise the target. Returns ``(y, target_info)``.
+
+    - regression: float values;
+    - binary: 0/1 (positive = sorted last or ``cfg.modelling['positive_label']``); numeric 0/1
+      targets are kept as they are;
+    - multiclass: integer codes 0..K-1 in sorted label order (``target_info['label_map']``),
+      up to ``cfg.modelling['max_classes']`` classes (default 50).
+    """
     info: dict[str, Any] = {"task_type": cfg.task_type}
     if cfg.task_type == "regression":
         y_num = pd.to_numeric(y, errors="coerce")
@@ -193,29 +204,37 @@ def prepare_target(y: pd.Series, cfg: TaskConfig) -> tuple[pd.Series, dict[str, 
         raise ValidationError(
             f"Target '{cfg.target}' contains {int(y.isna().sum())} missing values."
         )
-    if pd.api.types.is_numeric_dtype(y):
-        classes = sorted(pd.unique(y).tolist())
-        info["classes"] = classes
-        if len(classes) > 2:
-            raise ValidationError(
-                f"Classification target has {len(classes)} classes; only binary classification is "
-                "supported (ADR-004). Use task_type: regression for ordinal/count targets."
-            )
-        return y, info
-
-    y_clean = y.astype(str).str.strip().str.rstrip(".")
-    classes = sorted(y_clean.unique())
+    max_classes = int((cfg.modelling or {}).get("max_classes", 50))
+    keys = y.map(_label_key)
+    classes = sorted(keys.unique(), key=lambda k: (0, float(k)) if _is_number(k) else (1, k))
     info["classes"] = classes
+    info["n_classes"] = len(classes)
+    if len(classes) < 2:
+        raise ValidationError(f"Target '{cfg.target}' has a single class; nothing to learn.")
+    if len(classes) > max_classes:
+        raise ValidationError(
+            f"Classification target has {len(classes)} classes (> modelling.max_classes={max_classes}). "
+            "Group rare classes or use task_type: regression for ordinal/count targets."
+        )
     if len(classes) == 2:
-        pos = str((cfg.modelling or {}).get("positive_label", classes[1])).strip().rstrip(".")
+        if pd.api.types.is_numeric_dtype(y) and set(pd.unique(y)) <= {0, 1}:
+            return y.astype(int), info
+        pos = _label_key((cfg.modelling or {}).get("positive_label", classes[1]))
         if pos not in classes:
             raise ValidationError(f"positive_label '{pos}' not found in target classes {classes}.")
         info["positive_label"] = pos
         info["label_map"] = {c: int(c == pos) for c in classes}
-        return (y_clean == pos).astype(int), info
-    raise ValidationError(
-        f"Classification target has {len(classes)} classes; only binary classification is supported (ADR-004)."
-    )
+        return (keys == pos).astype(int), info
+    info["label_map"] = {c: i for i, c in enumerate(classes)}
+    return keys.map(info["label_map"]).astype(int), info
+
+
+def _is_number(text: str) -> bool:
+    try:
+        float(text)
+        return True
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -429,9 +448,12 @@ def train(
 
 
 def model_output(pipeline: Pipeline, X: pd.DataFrame, task_type: str) -> np.ndarray:
-    """Scalar model output used for prediction-drift: P(class=1) or regression value."""
+    """Scalar model output used for prediction-drift: P(class=1) (binary), confidence of the
+    predicted class (multiclass) or the regression value."""
     preds, probs = _scores(pipeline, X, task_type)
-    if probs is not None and probs.ndim == 2 and probs.shape[1] >= 2:
+    if probs is not None and probs.ndim == 2 and probs.shape[1] > 2:
+        return probs.max(axis=1)
+    if probs is not None and probs.ndim == 2 and probs.shape[1] == 2:
         return probs[:, 1]
     return preds.astype(float)
 
@@ -472,16 +494,22 @@ def predict_frame(
         out[cfg.id_col] = df[cfg.id_col].to_numpy()
 
     if cfg.task_type == "classification":
+        label_map = (metadata.get("metrics", {}).get("target") or {}).get("label_map")
+        inverse = {v: k for k, v in (label_map or {}).items()}
         try:
             proba = np.asarray(pipeline.predict_proba(X))
-            score = proba[:, 1] if proba.ndim == 2 and proba.shape[1] >= 2 else proba.ravel()
-            out["score"] = score
-            out["prediction"] = (score >= threshold).astype(int)
+            if proba.ndim == 2 and proba.shape[1] > 2:  # multiclass: one score per class
+                for k in range(proba.shape[1]):
+                    out[f"score_{inverse.get(k, k)}"] = proba[:, k]
+                out["score"] = proba.max(axis=1)  # confidence of the predicted class
+                out["prediction"] = proba.argmax(axis=1)
+            else:
+                score = proba[:, 1] if proba.ndim == 2 and proba.shape[1] >= 2 else proba.ravel()
+                out["score"] = score
+                out["prediction"] = (score >= threshold).astype(int)
         except AttributeError:
             out["prediction"] = pipeline.predict(X)
-        label_map = (metadata.get("metrics", {}).get("target") or {}).get("label_map")
-        if label_map:
-            inverse = {v: k for k, v in label_map.items()}
+        if inverse:
             out["label"] = out["prediction"].map(inverse)
     else:
         out["prediction"] = pipeline.predict(X)
@@ -553,14 +581,16 @@ def encode_target_like_training(
 
 
 def _labelled_metrics(
-    y: np.ndarray, pred: np.ndarray, score: np.ndarray | None, task_type: str
+    y: np.ndarray, pred: np.ndarray, probs: np.ndarray | None, task_type: str
 ) -> dict[str, Any]:
-    probs = None if score is None else np.column_stack([1 - score, score])
     m: dict[str, Any] = {"n": int(len(y))}
-    if task_type == "classification":
+    binary = probs is None or probs.ndim == 1 or probs.shape[1] <= 2
+    if task_type == "classification" and binary:
         m["positive_rate"] = float(np.mean(y))
-        if score is not None:
-            m["mean_score"] = float(np.mean(score))
+        if probs is not None:
+            m["mean_score"] = float(np.mean(probs[:, 1] if probs.ndim == 2 else probs))
+    elif task_type == "classification":
+        m["mean_confidence"] = float(np.mean(probs.max(axis=1)))  # type: ignore[union-attr]
     m.update(compute_metrics(y, pred, probs, task_type=task_type))  # type: ignore[arg-type]
     if task_type == "classification" and len(np.unique(y)) < 2:
         m["roc_auc"] = float("nan")  # undefined on a single-class batch (not 0.5)
@@ -587,9 +617,16 @@ def evaluate_frame(
     y = encode_target_like_training(df[cfg.target], cfg, metadata)
     preds = predict_frame(pipeline, cfg, metadata, df, threshold=threshold)
     pred = preds["prediction"].to_numpy()
-    score = preds["score"].to_numpy() if "score" in preds.columns else None
+    probs = None
+    if cfg.task_type == "classification" and "score" in preds.columns:
+        score_cols = [c for c in preds.columns if c.startswith("score_")]
+        if score_cols:  # multiclass: columns are in class-code order
+            probs = preds[score_cols].to_numpy(dtype=float)
+        else:
+            s1 = preds["score"].to_numpy(dtype=float)
+            probs = np.column_stack([1 - s1, s1])
 
-    overall = _labelled_metrics(y, pred, score, cfg.task_type)
+    overall = _labelled_metrics(y, pred, probs, cfg.task_type)
     failures = [f"overall: {f}" for f in _threshold_failures(cfg, overall)]
 
     by_group = None
@@ -599,7 +636,7 @@ def evaluate_frame(
         for key in pd.unique(keys):
             mask = keys == key
             m = _labelled_metrics(
-                y[mask], pred[mask], None if score is None else score[mask], cfg.task_type
+                y[mask], pred[mask], None if probs is None else probs[mask], cfg.task_type
             )
             rows.append({by: key, **m})
             failures += [f"{by}={key}: {f}" for f in _threshold_failures(cfg, m)]

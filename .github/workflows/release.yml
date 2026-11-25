@@ -1,0 +1,46 @@
+name: Release
+
+# Push a tag vX.Y.Z (matching mlkit.__version__) to publish a GitHub Release.
+# See docs/ROADMAP.md, section 2.4.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.12
+      - run: uv sync --all-extras
+
+      - name: Tag must match package version
+        run: |
+          PKG=$(uv run python -c "import mlkit; print(mlkit.__version__)")
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "package=$PKG tag=$TAG"
+          test "$PKG" = "$TAG"
+
+      - name: Quality gate (tests, benchmark, executable docs)
+        env:
+          MPLBACKEND: Agg
+        run: |
+          uv run ruff check src/ tests/ examples/
+          uv run mypy src/mlkit
+          uv run pytest tests/
+          uv run pytest -m "benchmark or docs"
+
+      - name: Build
+        run: uv build
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "mlkit $GITHUB_REF_NAME" \
+            --notes "See CHANGELOG.md for details."

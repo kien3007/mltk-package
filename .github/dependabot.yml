@@ -1,0 +1,22 @@
+# Periodic dependency upgrades (see docs/ROADMAP.md, section 2.1).
+version: 2
+updates:
+  - package-ecosystem: "uv"          # pyproject.toml + uv.lock
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:               # one PR for all non-breaking updates
+        update-types: ["minor", "patch"]
+    labels: ["dependencies"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      actions:
+        patterns: ["*"]
+    labels: ["dependencies", "ci"]

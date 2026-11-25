@@ -12,6 +12,8 @@ from mlkit.modelling.evaluation import (
 )
 from mlkit.modelling.trainers import (
     DummyTrainer,
+    ExtraTreesTrainer,
+    HistGBTrainer,
     LGBMTrainer,
     LinearTrainer,
     RandomForestTrainer,
@@ -24,6 +26,8 @@ __all__ = [
     "CVEvaluator",
     "CalibratedModelWrapper",
     "DummyTrainer",
+    "ExtraTreesTrainer",
+    "HistGBTrainer",
     "LGBM_SPACE",
     "LGBMTrainer",
     "LINEAR_SPACE",

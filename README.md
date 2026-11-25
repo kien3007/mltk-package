@@ -3,6 +3,9 @@
 > 📘 **[Hướng dẫn sử dụng theo từng công đoạn](docs/HUONG_DAN_SU_DUNG.md)**: mỗi công đoạn (profile, QC, EDA,
 > trực quan hóa, tiền xử lý, đặc trưng, chọn đặc trưng, mô hình, đánh giá, đóng gói, dự đoán, giám sát) dùng
 > hàm/class nào, để làm gì, tham số và kết quả trả về, kèm ví dụ chạy được.
+>
+> 🗺️ **[Kế hoạch nâng cấp định kỳ và lộ trình](docs/ROADMAP.md)**: so sánh năng lực với các thư viện cùng loại,
+> nhịp phát hành, cổng chất lượng, các mốc v0.4 → v1.0.
 
 `mlkit` là thư viện Python chuẩn hóa và đóng gói trọn vẹn 6 giai đoạn trong quy trình xây dựng mô hình học máy dạng bảng (Tabular ML):
 1. **QC & EDA**: Kiểm định chất lượng dữ liệu, kiểm tra schema, missing, outlier, rò rỉ dữ liệu (leakage), và cổng chất lượng (Quality Gate).
