@@ -286,11 +286,100 @@ class LGBMTrainer(BaseTrainer):
             **self.kwargs,
         }
         if self.task_type == "classification":
-            weight = _binary_pos_weight(y) if self.handle_imbalance else None
-            if weight is not None:
-                params["scale_pos_weight"] = weight
+            if self.handle_imbalance:
+                weight = _binary_pos_weight(y)
+                if weight is not None:
+                    params["scale_pos_weight"] = weight
+                elif len(np.unique(y)) > 2:
+                    params["class_weight"] = "balanced"  # multiclass
             return lgb.LGBMClassifier(**params)
         return lgb.LGBMRegressor(**params)
+
+
+@register("modelling.hist_gb")
+class HistGBTrainer(BaseTrainer):
+    """scikit-learn HistGradientBoosting: fast gradient boosting with native missing values."""
+
+    def __init__(
+        self,
+        max_iter: int = 200,
+        learning_rate: float = 0.1,
+        max_leaf_nodes: int = 31,
+        handle_imbalance: bool = True,
+        task_type: TaskType = "classification",
+        random_state: int = 42,
+        **kwargs: Any,
+    ) -> None:
+        self.max_iter = max_iter
+        self.learning_rate = learning_rate
+        self.max_leaf_nodes = max_leaf_nodes
+        self.handle_imbalance = handle_imbalance
+        self.task_type = task_type
+        self.random_state = random_state
+        self.kwargs = kwargs
+
+    def _build(self, y: np.ndarray) -> Any:
+        from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
+
+        params: dict[str, Any] = {
+            "max_iter": self.max_iter,
+            "learning_rate": self.learning_rate,
+            "max_leaf_nodes": self.max_leaf_nodes,
+            "random_state": self.random_state,
+            **self.kwargs,
+        }
+        if self.task_type == "classification":
+            if self.handle_imbalance:
+                params["class_weight"] = "balanced"
+            return HistGradientBoostingClassifier(**params)
+        return HistGradientBoostingRegressor(**params)
+
+    @property
+    def feature_importances_(self) -> np.ndarray:
+        # HistGradientBoosting has no impurity importances; report zeros rather than fail
+        return np.zeros(len(getattr(self, "feature_names_in_", [])))
+
+
+@register("modelling.extra_trees")
+class ExtraTreesTrainer(BaseTrainer):
+    """Extremely randomised trees (often as accurate as Random Forest, faster to train)."""
+
+    def __init__(
+        self,
+        n_estimators: int = 200,
+        max_depth: int | None = None,
+        min_samples_leaf: int = 1,
+        handle_imbalance: bool = True,
+        task_type: TaskType = "classification",
+        random_state: int = 42,
+        n_jobs: int | None = -1,
+        **kwargs: Any,
+    ) -> None:
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.min_samples_leaf = min_samples_leaf
+        self.handle_imbalance = handle_imbalance
+        self.task_type = task_type
+        self.random_state = random_state
+        self.n_jobs = n_jobs
+        self.kwargs = kwargs
+
+    def _build(self, y: np.ndarray) -> Any:
+        from sklearn.ensemble import ExtraTreesClassifier, ExtraTreesRegressor
+
+        params: dict[str, Any] = {
+            "n_estimators": self.n_estimators,
+            "max_depth": self.max_depth,
+            "min_samples_leaf": self.min_samples_leaf,
+            "random_state": self.random_state,
+            "n_jobs": self.n_jobs,
+            **self.kwargs,
+        }
+        if self.task_type == "classification":
+            if self.handle_imbalance:
+                params["class_weight"] = "balanced"
+            return ExtraTreesClassifier(**params)
+        return ExtraTreesRegressor(**params)
 
 
 @register("modelling.xgboost")

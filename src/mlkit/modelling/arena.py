@@ -20,6 +20,8 @@ from mlkit.modelling.evaluation import (
 )
 from mlkit.modelling.trainers import (
     DummyTrainer,
+    ExtraTreesTrainer,
+    HistGBTrainer,
     LGBMTrainer,
     LinearTrainer,
     RandomForestTrainer,
@@ -116,6 +118,16 @@ class ModelArena(BaseStep):
                 lambda: LGBMTrainer(task_type=task_type, random_state=rs, handle_imbalance=imb),
             ),
             "xgboost": ("XGBoost", lambda: XGBTrainer(task_type=task_type, random_state=rs)),
+            "hist_gb": (
+                "HistGradientBoosting",
+                lambda: HistGBTrainer(task_type=task_type, random_state=rs, handle_imbalance=imb),
+            ),
+            "extra_trees": (
+                "Extra Trees",
+                lambda: ExtraTreesTrainer(
+                    task_type=task_type, random_state=rs, handle_imbalance=imb
+                ),
+            ),
         }
         zoo: dict[str, Any] = {"Baseline (Dummy)": DummyTrainer(task_type=task_type)}
         for key in self.candidates if self.candidates is not None else DEFAULT_CANDIDATES:
@@ -297,6 +309,18 @@ class ModelArena(BaseStep):
         self, evaluator: CVEvaluator, model: Any, folds: list[FoldData], task_type: str
     ) -> float:
         if task_type != "classification":
+            return 0.5
+        n_classes = (
+            len(np.unique(np.concatenate([np.asarray(f[1]) for f in folds]))) if folds else 2
+        )
+        if n_classes > 2:
+            if self.threshold != 0.5:
+                self.report_.add(
+                    "decision_threshold",
+                    "warn",
+                    "Decision thresholds apply to binary targets only; "
+                    "multiclass predictions use the most probable class.",
+                )
             return 0.5
         if isinstance(self.threshold, (int, float)) and not isinstance(self.threshold, bool):
             if not 0.0 < float(self.threshold) < 1.0:

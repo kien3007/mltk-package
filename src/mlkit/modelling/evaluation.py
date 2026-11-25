@@ -13,6 +13,7 @@ from sklearn.metrics import (
     accuracy_score,
     brier_score_loss,
     f1_score,
+    log_loss,
     mean_absolute_error,
     mean_squared_error,
     precision_score,
@@ -28,13 +29,13 @@ from mlkit.core.errors import NotFittedError
 #: Metrics reported per task type (usable as keys of ``TaskConfig.metric_thresholds``).
 AVAILABLE_METRICS: dict[str, frozenset[str]] = {
     "classification": frozenset(
-        {"accuracy", "precision", "recall", "f1", "roc_auc", "brier", "ece"}
+        {"accuracy", "precision", "recall", "f1", "roc_auc", "pr_auc", "log_loss", "brier", "ece"}
     ),
     "regression": frozenset({"rmse", "mae", "r2"}),
 }
 
 #: Metrics where a smaller value is better (a threshold is then an upper bound).
-LOWER_IS_BETTER: frozenset[str] = frozenset({"rmse", "mae", "brier", "ece"})
+LOWER_IS_BETTER: frozenset[str] = frozenset({"rmse", "mae", "brier", "ece", "log_loss"})
 
 
 def expected_calibration_error(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float:
@@ -76,36 +77,92 @@ def optimal_threshold(
     raise ValueError(f"Unknown threshold criterion {criterion!r}; use 'f1' or 'youden'.")
 
 
+def _binary_average_precision(y: np.ndarray, p: np.ndarray) -> float:
+    """Average precision (area under the precision-recall curve), sklearn-equivalent."""
+    order = np.argsort(p, kind="mergesort")[::-1]
+    ps, ys = p[order], y[order]
+    idx = np.r_[np.where(np.diff(ps))[0], len(ys) - 1]
+    tps = np.cumsum(ys)[idx]
+    fps = idx + 1 - tps
+    if tps[-1] == 0:
+        return 0.0
+    precision = tps / (tps + fps)
+    recall = tps / tps[-1]
+    return float(np.sum(np.diff(np.r_[0.0, recall]) * precision))
+
+
+def _binary_log_loss(y: np.ndarray, p: np.ndarray) -> float:
+    eps = np.finfo(float).eps
+    p = np.clip(p, eps, 1 - eps)
+    return float(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p)))
+
+
 def compute_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
     y_prob: np.ndarray | None = None,
     task_type: Literal["classification", "regression"] = "classification",
 ) -> dict[str, float]:
-    """Compute task-specific performance metrics."""
+    """Compute task-specific performance metrics.
+
+    Binary classification: accuracy, precision, recall, f1, and with probabilities roc_auc,
+    pr_auc (average precision), log_loss, brier, ece.
+    Multiclass (labels 0..K-1, ``y_prob`` with K columns): accuracy, macro precision/recall/f1,
+    and with probabilities one-vs-rest macro roc_auc, log_loss, multiclass brier (sum over
+    classes, 0..2) and top-label ece.
+    Regression: rmse, mae, r2.
+    """
     metrics: dict[str, float] = {}
-
-    if task_type == "classification":
-        metrics["accuracy"] = float(accuracy_score(y_true, y_pred))
-        metrics["precision"] = float(precision_score(y_true, y_pred, zero_division=0))
-        metrics["recall"] = float(recall_score(y_true, y_pred, zero_division=0))
-        metrics["f1"] = float(f1_score(y_true, y_pred, zero_division=0))
-
-        if y_prob is not None:
-            probs = y_prob[:, 1] if y_prob.ndim == 2 and y_prob.shape[1] > 1 else y_prob.ravel()
-            try:
-                metrics["roc_auc"] = float(roc_auc_score(y_true, probs))
-            except Exception:
-                metrics["roc_auc"] = 0.5
-            # Probability quality (binary 0/1 targets only)
-            if set(np.unique(np.asarray(y_true))) <= {0, 1}:
-                metrics["brier"] = float(brier_score_loss(y_true, probs))
-                metrics["ece"] = expected_calibration_error(np.asarray(y_true), probs)
-    else:
+    if task_type != "classification":
         metrics["rmse"] = float(np.sqrt(mean_squared_error(y_true, y_pred)))
         metrics["mae"] = float(mean_absolute_error(y_true, y_pred))
         metrics["r2"] = float(r2_score(y_true, y_pred))
+        return metrics
 
+    y_arr = np.asarray(y_true)
+    prob = None if y_prob is None else np.asarray(y_prob, dtype=float)
+    n_cols = prob.shape[1] if prob is not None and prob.ndim == 2 else 0
+    multiclass = n_cols > 2 or len(np.unique(y_arr)) > 2
+    average = "macro" if multiclass else "binary"
+    metrics["accuracy"] = float(accuracy_score(y_arr, y_pred))
+    metrics["precision"] = float(precision_score(y_arr, y_pred, average=average, zero_division=0))
+    metrics["recall"] = float(recall_score(y_arr, y_pred, average=average, zero_division=0))
+    metrics["f1"] = float(f1_score(y_arr, y_pred, average=average, zero_division=0))
+    if prob is None:
+        return metrics
+
+    if multiclass:
+        k = max(n_cols, int(y_arr.max()) + 1)
+        labels = list(range(k))
+        sums = prob.sum(axis=1, keepdims=True)
+        prob = np.divide(prob, sums, out=np.full_like(prob, 1.0 / prob.shape[1]), where=sums > 0)
+        try:
+            metrics["roc_auc"] = float(
+                roc_auc_score(y_arr, prob, multi_class="ovr", average="macro", labels=labels)
+            )
+        except ValueError:
+            metrics["roc_auc"] = float("nan")  # e.g. a class absent from this sample
+        try:
+            metrics["log_loss"] = float(log_loss(y_arr, prob, labels=labels))
+        except ValueError:
+            metrics["log_loss"] = float("nan")
+        onehot = np.eye(k)[y_arr.astype(int)][:, : prob.shape[1]]
+        metrics["brier"] = float(np.mean(np.sum((prob - onehot) ** 2, axis=1)))
+        correct = (prob.argmax(axis=1) == y_arr).astype(int)
+        metrics["ece"] = expected_calibration_error(correct, prob.max(axis=1))
+        return metrics
+
+    probs = prob[:, 1] if prob.ndim == 2 and prob.shape[1] > 1 else prob.ravel()
+    try:
+        metrics["roc_auc"] = float(roc_auc_score(y_arr, probs))
+    except ValueError:
+        metrics["roc_auc"] = 0.5
+    if set(np.unique(y_arr)) <= {0, 1}:  # probability-quality metrics need 0/1 labels
+        y01 = y_arr.astype(int)
+        metrics["pr_auc"] = _binary_average_precision(y01, probs)
+        metrics["log_loss"] = _binary_log_loss(y01, probs)
+        metrics["brier"] = float(brier_score_loss(y01, probs))
+        metrics["ece"] = expected_calibration_error(y01, probs)
     return metrics
 
 
@@ -285,6 +342,8 @@ def _fast_metrics(
             )
         else:
             m["roc_auc"] = 0.5
+        m["pr_auc"] = _binary_average_precision(y_i, p1)
+        m["log_loss"] = _binary_log_loss(y_i, p1)
         m["brier"] = float(np.mean((p1 - y_i) ** 2))
         m["ece"] = expected_calibration_error(y_i, p1)
     return m

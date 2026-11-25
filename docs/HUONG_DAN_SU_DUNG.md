@@ -43,7 +43,7 @@ Mỗi công đoạn có một bảng tra cứu và một ví dụ ngắn chạy 
 | `write_table(df, path)` | Ghi file theo đuôi (csv / parquet / json) | `df`, đường dẫn | `Path` |
 | `TaskConfig(...)` | Toàn bộ cấu hình của bài toán | `task_type` (`classification`/`regression`), `target`, `id_col`, `time_col`, `group_col`, `cv_folds`, `test_size`, `column_types`, `metric_thresholds`, `modelling`, `monitoring`, `qc`, `steps` | `TaskConfig` |
 | `TaskConfig.from_yaml(path)` / `cfg.to_yaml(path)` | Đọc / ghi cấu hình YAML | đường dẫn | `TaskConfig` / — |
-| `prepare_target(y, cfg)` | Chuẩn hóa target: nhãn nhị phân dạng chữ về 0/1; từ chối nhiều lớp | `y` (Series), `cfg` | `(y, info)`; `info["label_map"]` là ánh xạ nhãn |
+| `prepare_target(y, cfg)` | Chuẩn hóa target: nhị phân về 0/1; nhiều lớp về 0..K-1 theo thứ tự đã sắp xếp (tối đa `modelling.max_classes`, mặc định 50) | `y` (Series), `cfg` | `(y, info)`; `info["label_map"]` là ánh xạ nhãn, `info["n_classes"]` là số lớp |
 | `split_data(X, y, cfg)` | Chia train/test: theo thời gian nếu có `time_col`, theo nhóm nếu có `group_col`, còn lại ngẫu nhiên phân tầng | `X`, `y`, `cfg` | `Split` (`X_train`, `X_test`, `y_train`, `y_test`, `strategy`) |
 
 ```python
@@ -334,11 +334,13 @@ print(sel.selected_features_)
 
 | Hàm / class | Dùng để | Tham số chính | Trả về / thuộc tính |
 |---|---|---|---|
-| `ModelArena` | **So sánh nhiều mô hình bằng CV** với mô hình ngây thơ; chọn mô hình thắng; tùy chọn hiệu chuẩn xác suất và chọn ngưỡng; fit mô hình thắng trên toàn bộ dữ liệu | `cv=5`, `candidates=["linear", "random_forest", "lightgbm", "xgboost"]`, `models={"tên": estimator}` (thêm mô hình riêng), `handle_imbalance=True`, `calibration=None\|"sigmoid"\|"isotonic"\|"auto"`, `threshold=0.5\|"f1"\|"youden"`, `enforce_baseline_gate=True` | `best_model_name_`, `best_estimator_`, `comparison_table_`, `cv_results_`, `decision_threshold_`, `calibration_`; `predict`, `predict_proba` |
+| `ModelArena` | **So sánh nhiều mô hình bằng CV** với mô hình ngây thơ; chọn mô hình thắng; tùy chọn hiệu chuẩn xác suất và chọn ngưỡng; fit mô hình thắng trên toàn bộ dữ liệu | `cv=5`, `candidates=["linear", "random_forest", "lightgbm", "xgboost", "hist_gb", "extra_trees"]` (mặc định: 3 mô hình đầu), `models={"tên": estimator}` (thêm mô hình riêng), `handle_imbalance=True`, `calibration=None\|"sigmoid"\|"isotonic"\|"auto"`, `threshold=0.5\|"f1"\|"youden"`, `enforce_baseline_gate=True` | `best_model_name_`, `best_estimator_`, `comparison_table_`, `cv_results_`, `decision_threshold_`, `calibration_`; `predict`, `predict_proba` |
 | `LinearTrainer` | Logistic regression (phân loại) / Ridge (hồi quy) | `C`, `handle_imbalance`, `task_type` | mô hình kiểu sklearn |
 | `RandomForestTrainer` | Random Forest | `n_estimators`, `max_depth`, `handle_imbalance`, `n_jobs` | |
 | `LGBMTrainer` | LightGBM | `n_estimators`, `learning_rate`, `num_leaves`, `handle_imbalance`, `**kwargs` (mọi tham số của LightGBM) | |
 | `XGBTrainer` | XGBoost (cần extra `xgboost`) | `n_estimators`, `learning_rate`, `max_depth`, `**kwargs` | |
+| `HistGBTrainer` | HistGradientBoosting của scikit-learn: boosting nhanh, tự xử lý giá trị thiếu | `max_iter`, `learning_rate`, `max_leaf_nodes`, `handle_imbalance` | |
+| `ExtraTreesTrainer` | Extra Trees: thường chính xác ngang Random Forest nhưng train nhanh hơn | `n_estimators`, `max_depth`, `min_samples_leaf`, `handle_imbalance`, `n_jobs` | |
 | `DummyTrainer` | Mô hình ngây thơ (đoán theo tỉ lệ / trung bình) dùng làm mốc so sánh | `task_type` | |
 | `SklearnModelWrapper(estimator)` | Dùng bất kỳ mô hình sklearn nào như một trainer của mlkit | estimator | |
 | `CalibratedModelWrapper(base, method)` | Hiệu chuẩn xác suất của một mô hình | `method="sigmoid"\|"isotonic"`, `cv=3` | |
@@ -374,7 +376,7 @@ print(search.best_params_, round(search.best_score_, 4))
 
 | Hàm / class | Dùng để | Tham số chính | Trả về |
 |---|---|---|---|
-| `compute_metrics(y_true, y_pred, y_prob=None, task_type)` | Tính metric | phân loại: thêm `y_prob` để có AUC/Brier/ECE | `dict`: `accuracy`, `precision`, `recall`, `f1`, `roc_auc`, `brier`, `ece` (phân loại); `rmse`, `mae`, `r2` (hồi quy) |
+| `compute_metrics(y_true, y_pred, y_prob=None, task_type)` | Tính metric (nhị phân, nhiều lớp, hồi quy) | phân loại: thêm `y_prob` để có AUC/log-loss/Brier/ECE | `dict`. Nhị phân: `accuracy`, `precision`, `recall`, `f1`, `roc_auc`, `pr_auc`, `log_loss`, `brier`, `ece`. Nhiều lớp: tương tự, với precision/recall/F1 macro, AUC one-vs-rest macro, không có `pr_auc`. Hồi quy: `rmse`, `mae`, `r2` |
 | `compute_bootstrap_ci(y_true, y_pred, y_prob, ...)` | Khoảng tin cậy bootstrap cho từng metric | `n_bootstraps=200`, `ci=0.95` | `dict[metric] = {mean, std, ci_lower, ci_upper}` |
 | `expected_calibration_error(y, p)` | ECE: xác suất dự báo khớp với tần suất thực đến đâu (0 là hoàn hảo) | `n_bins=10` | số |
 | `optimal_threshold(y, p, criterion)` | Ngưỡng quyết định tối ưu | `"f1"` hoặc `"youden"` | số |
@@ -399,6 +401,10 @@ print(optimal_threshold(y, p[:, 1], "f1"))
 groups = np.repeat(np.arange(60), 10)              # 60 nhóm, CV không trộn nhóm
 res = CVEvaluator(cv=3).evaluate(LinearTrainer(), X, y, groups=groups)
 print(res["roc_auc_mean"], res["roc_auc_std"])
+
+y3 = rng.integers(0, 3, 600)                        # nhiều lớp: nhãn 0..K-1, xác suất K cột
+p3 = LinearTrainer().fit(X.assign(t=y3), y3).predict_proba(X.assign(t=y3))
+print(compute_metrics(y3, p3.argmax(axis=1), p3))  # AUC one-vs-rest macro, log_loss, ...
 ```
 
 ---
@@ -469,7 +475,7 @@ print(len(verify_bundle("artifacts/guide/adult")), "file đã kiểm tra checksu
 
 | Hàm | Dùng để | Tham số chính | Trả về |
 |---|---|---|---|
-| `predict_bundle(bundle_path, df, threshold=None)` | Dự đoán từ thư mục bundle | `threshold`: mặc định dùng ngưỡng lưu trong bundle | `DataFrame`: `id_col` (nếu có), `score` (xác suất), `prediction`, `label` (nhãn gốc) |
+| `predict_bundle(bundle_path, df, threshold=None)` | Dự đoán từ thư mục bundle | `threshold`: mặc định dùng ngưỡng lưu trong bundle (chỉ áp dụng cho nhị phân) | `DataFrame`: `id_col` (nếu có), `score` (xác suất lớp dương; với nhiều lớp là độ tự tin), `score_<nhãn>` cho từng lớp (nhiều lớp), `prediction`, `label` (nhãn gốc) |
 | `predict_frame(pipeline, cfg, metadata, df, threshold=None)` | Như trên nhưng dùng bundle đã nạp sẵn (nhanh khi dự đoán nhiều lần) | | `DataFrame` |
 | `validate_input(df, schema)` | Kiểm tra đủ cột lúc train; bỏ cột thừa; sắp lại đúng thứ tự | `schema = metadata["schema"]` | `DataFrame`; ném `ValidationError` nếu thiếu cột |
 | `model_output(pipeline, X, task_type)` | Đầu ra dạng số của mô hình: xác suất nhãn dương, hoặc giá trị hồi quy | | mảng |
@@ -554,7 +560,7 @@ print(client.post("/predict", json={"records": records}).json())
 |---|---|
 | `QualityGateError` | QC có lỗi |
 | `BaselineComparisonError` | Không mô hình nào thắng baseline |
-| `ValidationError` | Dữ liệu hoặc cấu hình sai (thiếu cột, nhiều lớp, sai checksum...) |
+| `ValidationError` | Dữ liệu hoặc cấu hình sai (thiếu cột, quá nhiều lớp, nhãn lạ, sai checksum...) |
 | `NotFittedError` | Dùng bước khi chưa `fit` |
 | `RegistryError` | Khóa không có trong registry |
 

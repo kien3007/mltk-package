@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from mlkit.core.config import TaskConfig
-from mlkit.core.errors import QualityGateError, ValidationError
+from mlkit.core.errors import QualityGateError
 
 
 @dataclass
@@ -195,8 +195,8 @@ CASES: list[Case] = [
     Case(
         "wine_multiclass",
         _sk("load_wine"),
-        expect_error=ValidationError,
-        description="3 classes: clear rejection",
+        metric=("roc_auc", 0.97),
+        description="3 classes, numeric labels (one-vs-rest macro AUC)",
     ),
     Case("imbalanced_1pct", _imbalanced, metric=("roc_auc", 0.80), qc_warns=("class_imbalance",)),
     Case(
@@ -330,8 +330,8 @@ OPENML_CASES: list[Case] = [
     Case(
         "cmc_multiclass",
         _openml(23),
-        expect_error=ValidationError,
-        description="3 classes: clear rejection",
+        metric=("roc_auc", 0.65),
+        description="3 classes, categorical survey data",
     ),
 ]
 

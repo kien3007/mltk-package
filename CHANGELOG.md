@@ -1,6 +1,34 @@
 # Changelog
 
-## [Unreleased] - độ bền tầng dữ liệu (ADR-008)
+## [0.3.0] - 2026-11-25
+
+Bao gồm mốc v0.3 (dưới đây) cùng toàn bộ phần **nền tảng dữ liệu** (ADR-007) và **độ bền tầng dữ liệu** (ADR-008)
+đã merge sau 0.2.0.
+
+### Phân loại nhiều lớp (ADR-009, thay ADR-004)
+- `prepare_target` mã hóa nhãn thành 0..K-1 và lưu `label_map`; giới hạn `modelling.max_classes` (mặc định 50).
+- Metric nhiều lớp: precision/recall/F1 macro, ROC-AUC one-vs-rest macro, log-loss, Brier nhiều lớp, ECE theo nhãn
+  được dự đoán.
+- `predict` trả `score_<nhãn>` cho từng lớp; `evaluate` và `monitor` hỗ trợ nhiều lớp; ngưỡng quyết định chỉ áp dụng
+  cho bài toán nhị phân (có cảnh báo khi cấu hình cho nhiều lớp).
+
+### Mô hình và metric
+- `HistGBTrainer` (candidate `hist_gb`) và `ExtraTreesTrainer` (candidate `extra_trees`). LightGBM dùng
+  `class_weight="balanced"` cho nhiều lớp khi `handle_imbalance`.
+- Metric nhị phân mới: `pr_auc` (average precision) và `log_loss`; cả hai dùng được trong `metric_thresholds`
+  (`log_loss` theo chiều thấp hơn là tốt hơn).
+
+### Quy trình nâng cấp định kỳ
+- `docs/ROADMAP.md`: bảng năng lực so với các thư viện tham chiếu, nhịp nâng cấp, chính sách phiên bản/deprecation,
+  cổng chất lượng, lộ trình v0.4 → v1.0.
+- `.github/dependabot.yml` (dependency hằng tuần, Actions hằng tháng); `.github/workflows/release.yml` (tag
+  `vX.Y.Z` → kiểm tra, build, GitHub Release).
+
+### Thay đổi không tương thích
+- Target nhiều lớp không còn bị từ chối, mà được huấn luyện.
+- Với nhị phân, `compute_metrics` trả thêm khóa `pr_auc`, `log_loss`.
+
+## Độ bền tầng dữ liệu (ADR-008)
 
 ### Sửa lỗi (phát hiện qua dò lỗi trường hợp biên và dữ liệu thật)
 - **Crash:**
@@ -30,7 +58,7 @@
 - `mlkit benchmark --suite openml`: 15 dataset công khai; workflow CI hằng tuần (`benchmark-openml.yml`).
 - LightGBM/XGBoost nhận tên cột theo vị trí (`f0..fN`), nên tên cột lạ không còn làm thư viện crash.
 
-## [Unreleased] - nền tảng dữ liệu (ADR-007)
+## Nền tảng dữ liệu (ADR-007)
 
 ### Hiểu dữ liệu
 - `mlkit.qc_eda.profile`: profile và **kiểu ngữ nghĩa** dùng chung cho mọi bước. Nhận diện số lưu dạng chuỗi
