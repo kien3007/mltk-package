@@ -26,8 +26,12 @@ from mlkit.viz.eda_charts import (
     plot_target_by_feature,
 )
 from mlkit.viz.html_report import generate_html_report
+from mlkit.viz.ts_charts import plot_acf, plot_decomposition, plot_forecast
 
 __all__ = [
+    "plot_acf",
+    "plot_decomposition",
+    "plot_forecast",
     "generate_html_report",
     "plot_association_matrix",
     "plot_column_overview",

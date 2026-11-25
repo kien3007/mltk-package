@@ -7,9 +7,11 @@ and ``mlkit monitor`` and can be called directly from Python.
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -32,6 +34,7 @@ from mlkit.core.report import Report
 from mlkit.features import DatetimeFeatures, TextFeatures
 from mlkit.modelling import ModelArena, compute_bootstrap_ci, compute_metrics
 from mlkit.modelling.evaluation import AVAILABLE_METRICS, LOWER_IS_BETTER
+from mlkit.modelling.presets import resolve_modelling
 from mlkit.monitoring import DriftMonitor
 from mlkit.preprocessing import (
     CategoricalEncoder,
@@ -43,6 +46,12 @@ from mlkit.preprocessing import (
 from mlkit.qc_eda import QualityCheckStep
 from mlkit.qc_eda.profile import ProfileOptions
 from mlkit.selection import CorrelationFilter, ModelImportanceSelector, VarianceFilter
+from mlkit.timeseries import (
+    forecast_metrics,
+    forecast_options,
+    prepare_forecast_frame,
+    snaive_column,
+)
 
 logger = get_logger(__name__)
 
@@ -50,14 +59,20 @@ SUPPORTED_DATA_SUFFIXES = {".csv", ".parquet", ".pq", ".feather", ".xlsx", ".xls
 
 
 # --------------------------------------------------------------------------- I/O
-def read_table(path: str | Path) -> pd.DataFrame:
-    """Read a tabular file by extension (CSV, Parquet, Feather, Excel, JSON lines/records)."""
+def read_table(
+    path: str | Path, engine: Literal["c", "python", "pyarrow"] | None = None
+) -> pd.DataFrame:
+    """Read a tabular file by extension (CSV, Parquet, Feather, Excel, JSON lines/records).
+
+    ``engine="pyarrow"`` reads CSV with Arrow's multi-threaded parser (several times faster on
+    large files; ISO dates come back as datetimes instead of text).
+    """
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Data file not found: {p}")
     suffix = p.suffix.lower()
     if suffix == ".csv":
-        return pd.read_csv(p)
+        return pd.read_csv(p, engine=engine) if engine else pd.read_csv(p)
     if suffix in {".parquet", ".pq"}:
         return pd.read_parquet(p)
     if suffix == ".feather":
@@ -97,7 +112,7 @@ def build_default_pipeline(cfg: TaskConfig) -> Pipeline:
     and encoding. Rare-level folding only touches low-cardinality columns; higher-cardinality
     columns are target/frequency encoded with smoothing instead.
     """
-    modelling = cfg.modelling or {}
+    modelling = resolve_modelling(cfg.modelling)
     profile_options = ProfileOptions(overrides=dict(cfg.column_types)) if cfg.column_types else None
     encoder = CategoricalEncoder(random_state=cfg.seed)
     steps = [
@@ -125,7 +140,9 @@ def build_default_pipeline(cfg: TaskConfig) -> Pipeline:
         (
             "modelling_arena",
             ModelArena(
-                cv=cfg.cv_folds,
+                cv=cfg.cv_folds
+                if "cv_folds" in cfg.model_fields_set
+                else modelling.get("cv_folds", cfg.cv_folds),
                 enforce_baseline_gate=cfg.baseline_gate,
                 random_state=cfg.seed,
                 candidates=modelling.get("candidates"),
@@ -133,6 +150,9 @@ def build_default_pipeline(cfg: TaskConfig) -> Pipeline:
                 calibration=modelling.get("calibration"),
                 threshold=modelling.get("threshold", 0.5),
                 tuning=modelling.get("tuning"),
+                ensemble=modelling.get("ensemble"),
+                ensemble_top_k=int(modelling.get("ensemble_top_k", 3)),
+                time_budget=modelling.get("time_budget"),
             ),
         ),
     ]
@@ -356,11 +376,19 @@ def train(
     html_report: str | Path | None = None,
 ) -> TrainResult:
     """Train, evaluate on a holdout, capture drift baselines and (optionally) save a bundle."""
+    t_start = time.perf_counter()
     if cfg.target not in df.columns:
         raise ValidationError(
             f"Target column '{cfg.target}' not found in dataset columns: {list(df.columns)}"
         )
     validate_metric_thresholds(cfg)
+
+    forecast_used: dict[str, Any] | None = None
+    if forecast_options(cfg) is not None:
+        df, forecast_used = prepare_forecast_frame(cfg, df)
+        logger.info(
+            "Forecasting: %s", {k: v for k, v in forecast_used.items() if k != "feature_columns"}
+        )
 
     X = df.drop(columns=[cfg.target])
     y, target_info = prepare_target(df[cfg.target], cfg)
@@ -376,6 +404,8 @@ def train(
     )
 
     logger.info("Training %d-step pipeline (task=%s)", len(pipeline.steps), cfg.task_type)
+    if arena_name:  # modelling.time_budget covers the whole train(), not only the arena
+        pipeline.named_steps[arena_name].budget_clock_ = t_start
     pipeline.fit(split.X_train, split.y_train, cfg=cfg, **split.fit_params)
 
     metrics: dict[str, Any] = {"split": split.strategy, "target": target_info}
@@ -386,6 +416,7 @@ def train(
         metrics["calibration"] = arena.calibration_
         metrics["decision_threshold"] = arena.decision_threshold_
         metrics["tuned_params"] = getattr(arena, "tuned_params_", {})
+        metrics["ensemble_members"] = getattr(arena, "ensemble_members_", [])
         metrics["cv"] = {
             k: v
             for k, v in arena.cv_results_.get(arena.best_model_name_, {}).items()
@@ -401,6 +432,21 @@ def train(
     metrics["holdout_ci"] = compute_bootstrap_ci(
         np.asarray(split.y_test), preds, probs, task_type=cfg.task_type, random_state=cfg.seed
     )
+    if forecast_used is not None:
+        snaive = snaive_column(cfg.target)
+        y_tr = np.asarray(split.y_train, dtype=float)
+        scale = float(np.nanmean(np.abs(y_tr - split.X_train[snaive].to_numpy(dtype=float))))
+        metrics["forecasting"] = forecast_used
+        metrics["holdout_forecast"] = forecast_metrics(split.y_test, preds, scale)
+        metrics["seasonal_naive"] = forecast_metrics(split.y_test, split.X_test[snaive], scale)
+        metrics["beats_seasonal_naive"] = bool(
+            metrics["holdout_forecast"]["mae"] < metrics["seasonal_naive"]["mae"]
+        )
+        logger.info(
+            "Forecast MAE %.4f vs seasonal-naive %.4f",
+            metrics["holdout_forecast"]["mae"],
+            metrics["seasonal_naive"]["mae"],
+        )
     logger.info(
         "Holdout metrics: %s", json.dumps({k: round(v, 4) for k, v in metrics["holdout"].items()})
     )
@@ -489,12 +535,26 @@ def predict_frame(
     """
     if threshold is None:
         threshold = float(metadata.get("metrics", {}).get("decision_threshold") or 0.5)
+    forecast_used = metadata.get("metrics", {}).get("forecasting")
+    if forecast_used:
+        # lag features need the history: pass past rows with their target and the periods to
+        # forecast with an empty target; every row is scored, filter on the target being NaN.
+        if cfg.target not in df.columns:
+            raise ValidationError(
+                f"Forecasting bundles need history: include column '{cfg.target}' "
+                "(actual values for past periods, empty for the periods to forecast)."
+            )
+        df, _ = prepare_forecast_frame(cfg, df, options=forecast_used, training=False)
     X = df.drop(columns=[cfg.target], errors="ignore")
     X = validate_input(X, metadata.get("schema", {}))
 
     out = pd.DataFrame(index=df.index)
     if cfg.id_col and cfg.id_col in df.columns:
         out[cfg.id_col] = df[cfg.id_col].to_numpy()
+    if forecast_used:
+        for c in (cfg.group_col, cfg.time_col):
+            if c and c in df.columns:
+                out[c] = df[c].to_numpy()
 
     if cfg.task_type == "classification":
         label_map = (metadata.get("metrics", {}).get("target") or {}).get("label_map")
@@ -530,6 +590,72 @@ def predict_bundle(
 ) -> pd.DataFrame:
     pipeline, cfg, metadata = load_bundle(bundle_path)
     return predict_frame(pipeline, cfg, metadata, df, threshold=threshold, explain=explain)
+
+
+def iter_table(path: str | Path, chunksize: int = 200_000) -> Iterator[pd.DataFrame]:
+    """Read a CSV / Parquet file in chunks of ``chunksize`` rows (other formats: one chunk)."""
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Data file not found: {p}")
+    suffix = p.suffix.lower()
+    if suffix == ".csv":
+        yield from pd.read_csv(p, chunksize=chunksize)
+    elif suffix in {".parquet", ".pq"}:
+        import pyarrow.parquet as pq
+
+        for batch in pq.ParquetFile(p).iter_batches(batch_size=chunksize):
+            yield batch.to_pandas()
+    else:
+        df = read_table(p)
+        for start in range(0, len(df), chunksize):
+            yield df.iloc[start : start + chunksize]
+
+
+def predict_file(
+    bundle_path: str | Path,
+    data_path: str | Path,
+    out_path: str | Path,
+    chunksize: int = 200_000,
+    threshold: float | None = None,
+    explain: int = 0,
+) -> int:
+    """Score a file of any size chunk by chunk (memory stays ~ one chunk); returns row count.
+
+    Output is CSV or Parquet (by extension of ``out_path``), written incrementally.
+    """
+    pipeline, cfg, metadata = load_bundle(bundle_path)
+    if metadata.get("metrics", {}).get("forecasting"):
+        raise ValidationError("Forecasting bundles need the full history; use predict_bundle.")
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    suffix = out.suffix.lower()
+    if suffix not in {".csv", ".parquet", ".pq"}:
+        raise ValueError("Chunked scoring writes .csv or .parquet")
+    writer: Any = None
+    n = 0
+    try:
+        for i, chunk in enumerate(iter_table(data_path, chunksize)):
+            pred = predict_frame(
+                pipeline, cfg, metadata, chunk, threshold=threshold, explain=explain
+            )
+            n += len(pred)
+            if suffix == ".csv":
+                pred.to_csv(out, mode="w" if i == 0 else "a", header=i == 0, index=False)
+            else:
+                import pyarrow as pa
+                import pyarrow.parquet as pq
+
+                if writer is None:
+                    table = pa.Table.from_pandas(pred, preserve_index=False)
+                    writer = pq.ParquetWriter(out, table.schema)
+                else:
+                    table = pa.Table.from_pandas(pred, preserve_index=False).cast(writer.schema)
+                writer.write_table(table)
+            logger.info("Scored %d rows", n)
+    finally:
+        if writer is not None:
+            writer.close()
+    return n
 
 
 # ---------------------------------------------------------------------- monitor

@@ -42,6 +42,9 @@ class TaskConfig(BaseModel):
     selection: dict[str, Any] = Field(default_factory=dict)
     modelling: dict[str, Any] = Field(default_factory=dict)
     monitoring: dict[str, Any] = Field(default_factory=dict)
+    #: Forecasting options (ADR-010): {horizon, season, lags, windows}. Set automatically by
+    #: ``task_type: forecasting``; a non-empty dict turns a regression task into forecasting.
+    forecasting: dict[str, Any] = Field(default_factory=dict)
 
     # Runner settings (used by the CLI)
     data_path: str | None = None
@@ -50,6 +53,20 @@ class TaskConfig(BaseModel):
     #: Per-column semantic type overrides, honoured by QC, EDA and preprocessing alike, e.g.
     #: {"stars": "categorical", "order_day": "datetime:yyyymmdd", "notes": "ignore"}.
     column_types: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _forecasting_alias(cls, data: Any) -> Any:
+        # ``task_type: forecasting`` is regression on lag features of the target over time
+        if isinstance(data, dict) and data.get("task_type") == "forecasting":
+            data = dict(data)
+            data["task_type"] = "regression"
+            data["forecasting"] = {"horizon": 1, **(data.get("forecasting") or {})}
+        return data
+
+    @property
+    def is_forecasting(self) -> bool:
+        return bool(self.forecasting)
 
     @field_validator("column_types")
     @classmethod

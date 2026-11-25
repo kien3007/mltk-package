@@ -41,6 +41,7 @@ class Case:
     expect_error: type[Exception] | None = None
     qc_warns: tuple[str, ...] = ()
     description: str = ""
+    online: bool = False  # needs a download (skipped by the offline test run)
 
 
 # --------------------------------------------------------------------------- generators
@@ -109,6 +110,73 @@ def _free_text(rng: np.random.Generator) -> pd.DataFrame:
     )
     df["target"] = _logistic(rng, (lengths - 20) / 5)
     return df
+
+
+def _semantic_text(rng: np.random.Generator) -> pd.DataFrame:
+    """Sentiment lives in *which* words appear; length and punctuation carry no signal."""
+    pos = ["excellent", "great", "love", "perfect", "friendly", "fast", "recommend", "fresh"]
+    neg = ["terrible", "awful", "broken", "rude", "slow", "refund", "disappointed", "stale"]
+    neutral = [
+        "the",
+        "order",
+        "arrived",
+        "on",
+        "monday",
+        "package",
+        "store",
+        "service",
+        "product",
+        "staff",
+        "delivery",
+        "and",
+        "was",
+        "it",
+        "with",
+        "my",
+    ]
+    n = 3000
+    rows, logits = [], []
+    for _ in range(n):
+        k = int(rng.integers(8, 30))
+        n_pos, n_neg = rng.integers(0, 4), rng.integers(0, 4)
+        words = (
+            list(rng.choice(neutral, k))
+            + list(rng.choice(pos, n_pos))
+            + list(rng.choice(neg, n_neg))
+        )
+        rng.shuffle(words)
+        rows.append(" ".join(words).capitalize() + ".")
+        logits.append(1.2 * (n_pos - n_neg))
+    return pd.DataFrame({"review": rows, "target": _logistic(rng, np.asarray(logits, dtype=float))})
+
+
+def _multi_table_pit(rng: np.random.Generator) -> pd.DataFrame:
+    """Customers + transactions: the label is a purchase in the 30 days after each customer's
+    own cutoff; features come from point-in-time aggregation of the events before it."""
+    from mlkit.features.relational import point_in_time_features
+
+    n = 1500
+    rate = rng.gamma(1.2, 0.04, n)  # purchases per day
+    events = []
+    for c in range(n):
+        k = rng.poisson(rate[c] * 400)
+        days = np.sort(rng.uniform(0, 400, k))
+        events.append(
+            pd.DataFrame({"customer": c, "day": days, "amount": rng.lognormal(3, 0.5, k)})
+        )
+    ev = pd.concat(events, ignore_index=True)
+    as_of = rng.uniform(250, 360, n)
+    primary = pd.DataFrame(
+        {"customer": np.arange(n), "as_of": as_of, "segment": rng.choice(["a", "b"], n)}
+    )
+    t = ev["day"].to_numpy()
+    cust = ev["customer"].to_numpy()
+    after = (t > as_of[cust]) & (t <= as_of[cust] + 30)
+    primary["target"] = np.bincount(cust[after], minlength=n) > 0
+    feats = point_in_time_features(primary, ev, "customer", "as_of", "day", windows=(30, 90))
+    return pd.concat([primary.drop(columns=["customer", "as_of"]), feats], axis=1).assign(
+        target=lambda d: d["target"].astype(int)
+    )
 
 
 def _informative_missing(rng: np.random.Generator) -> pd.DataFrame:
@@ -208,6 +276,19 @@ CASES: list[Case] = [
     Case("dirty_types", _dirty_types, metric=("roc_auc", 0.75), qc_warns=("disguised_missing",)),
     Case("free_text", _free_text, metric=("roc_auc", 0.80), qc_warns=("text_columns",)),
     Case("informative_missing", _informative_missing, metric=("roc_auc", 0.75)),
+    Case(
+        "semantic_text",
+        _semantic_text,
+        metric=("roc_auc", 0.82),
+        qc_warns=("text_columns",),
+        description="signal in the words, not the length: needs TextFeatures(semantic=...)",
+    ),
+    Case(
+        "multi_table_pit",
+        _multi_table_pit,
+        metric=("roc_auc", 0.70),
+        description="transactions aggregated point-in-time before each customer's cutoff",
+    ),
     Case("weekday_effect", _weekday_effect, metric=("roc_auc", 0.75)),
     Case("grouped_users", _grouped, config={"group_col": "user"}, metric=("roc_auc", 0.70)),
     Case("wide_p500", _wide, metric=("roc_auc", 0.85)),
@@ -335,7 +416,201 @@ OPENML_CASES: list[Case] = [
     ),
 ]
 
-SUITES: dict[str, list[Case]] = {"synthetic": CASES, "openml": OPENML_CASES}
+
+# --------------------------------------------------------------------------- time series
+# Forecasting cases (ADR-010). The metric is the forecast skill 1 - MAE / MAE(seasonal naive)
+# on the chronological holdout: > 0 means the model beats the seasonal-naive baseline.
+def _retail_stores(rng: np.random.Generator) -> pd.DataFrame:
+    days = pd.date_range("2023-01-01", periods=600, freq="D")
+    t = np.arange(len(days))
+    weekly = np.array([0.8, 0.85, 0.9, 0.95, 1.1, 1.35, 1.05])[days.dayofweek]
+    yearly = 1 + 0.15 * np.sin(2 * np.pi * t / 365.25)
+    frames = []
+    for s in range(8):
+        promo = (rng.uniform(size=len(t)) < 0.12).astype(int)
+        level = 80 + 25 * s
+        sales = level * (1 + 0.0008 * t) * weekly * yearly * (1 + 0.35 * promo)
+        frames.append(
+            pd.DataFrame(
+                {
+                    "store": f"store_{s:02d}",
+                    "date": days,
+                    "promo": promo,
+                    "sales": sales * rng.lognormal(0, 0.06, len(t)),
+                }
+            )
+        )
+    return pd.concat(frames, ignore_index=True).rename(columns={"sales": "target"})
+
+
+def _hourly_load(rng: np.random.Generator) -> pd.DataFrame:
+    hours = pd.date_range("2024-01-01", periods=24 * 75, freq="h")
+    t = np.arange(len(hours))
+    temp = (
+        12 + 6 * np.sin(2 * np.pi * (hours.hour - 9) / 24) + np.cumsum(rng.normal(0, 0.15, len(t)))
+    )
+    daily = 1 + 0.35 * np.sin(2 * np.pi * (hours.hour - 7) / 24) ** 2
+    weekend = np.where(hours.dayofweek >= 5, 0.8, 1.0)
+    load = 500 * daily * weekend + 9 * np.abs(temp - 15) + rng.normal(0, 12, len(t))
+    return pd.DataFrame({"ts": hours, "temperature": temp, "target": load})
+
+
+def _monthly_panel(rng: np.random.Generator) -> pd.DataFrame:
+    months = pd.date_range("2018-01-01", periods=72, freq="MS")
+    t = np.arange(len(months))
+    frames = []
+    for s in range(30):
+        trend = rng.uniform(-0.004, 0.012)
+        amp = rng.uniform(0.05, 0.3)
+        phase = rng.integers(0, 12)
+        y = 200 * np.exp(trend * t) * (1 + amp * np.sin(2 * np.pi * (t + phase) / 12))
+        frames.append(
+            pd.DataFrame(
+                {
+                    "sku": f"sku_{s:02d}",
+                    "month": months,
+                    "target": y * rng.lognormal(0, 0.04, len(t)),
+                }
+            )
+        )
+    return pd.concat(frames, ignore_index=True)
+
+
+def _bike_hourly(rng: np.random.Generator) -> pd.DataFrame:
+    df = _openml(42712, max_rows=None)(rng)
+    return df.assign(hour_index=np.arange(len(df)))
+
+
+def _co2_weekly(rng: np.random.Generator) -> pd.DataFrame:
+    df = _openml(41187, max_rows=None)(rng)
+    date = pd.to_datetime(df[["year", "month", "day"]].astype(int))
+    return pd.DataFrame({"date": date, "target": df["target"].astype(float)}).sort_values("date")
+
+
+TIMESERIES_CASES: list[Case] = [
+    Case(
+        "retail_stores",
+        _retail_stores,
+        "forecasting",
+        config={"time_col": "date", "group_col": "store", "forecasting": {"horizon": 7}},
+        metric=("skill", 0.35),
+        description="8 stores, weekly + yearly seasonality, trend, known promotions",
+    ),
+    Case(
+        "hourly_load",
+        _hourly_load,
+        "forecasting",
+        config={"time_col": "ts", "forecasting": {"horizon": 24}},
+        metric=("skill", 0.5),
+        description="hourly load, daily cycle, weekend effect, temperature-driven",
+    ),
+    Case(
+        "monthly_panel",
+        _monthly_panel,
+        "forecasting",
+        config={
+            "time_col": "month",
+            "group_col": "sku",
+            "forecasting": {"horizon": 3, "season": 12},
+        },
+        metric=("skill", 0.25),
+        description="30 SKUs x 72 months, heterogeneous trends and seasonal amplitude",
+    ),
+    Case(
+        "bike_sharing_hourly",
+        _bike_hourly,
+        "forecasting",
+        config={"time_col": "hour_index", "forecasting": {"horizon": 24, "season": 24}},
+        metric=("skill", 0.3),
+        description="OpenML bike sharing demand, hourly, weather covariates",
+        online=True,
+    ),
+    Case(
+        "co2_weekly",
+        _co2_weekly,
+        "forecasting",
+        config={"time_col": "date", "forecasting": {"horizon": 4, "season": 52}},
+        metric=("skill", 0.35),
+        description="OpenML Mauna Loa CO2, weekly, trend + yearly cycle",
+        online=True,
+    ),
+]
+
+SUITES: dict[str, list[Case]] = {
+    "synthetic": CASES,
+    "openml": OPENML_CASES,
+    "timeseries": TIMESERIES_CASES,
+}
+
+
+# --------------------------------------------------------------------------- scale
+def make_wide_frame(n_rows: int, n_cols: int = 50, seed: int = 0) -> pd.DataFrame:
+    """Memory-lean synthetic frame: ~70% float32 (5% missing), ~20% categoricals, ~10% ints."""
+    rng = np.random.default_rng(seed)
+    n_cat = max(1, n_cols // 5)
+    n_int = max(1, n_cols // 10)
+    n_num = n_cols - n_cat - n_int
+    cols: dict[str, Any] = {}
+    for i in range(n_num):
+        x = rng.standard_normal(n_rows, dtype=np.float32)
+        x[rng.random(n_rows, dtype=np.float32) < 0.05] = np.nan
+        cols[f"num_{i}"] = x
+    for i in range(n_cat):
+        levels = pd.Index([f"level_{k}" for k in range(5 + 7 * i)])
+        cols[f"cat_{i}"] = pd.Categorical.from_codes(
+            rng.integers(0, len(levels), n_rows, dtype=np.int16), categories=levels
+        )
+    for i in range(n_int):
+        cols[f"int_{i}"] = rng.integers(0, 1000 * (i + 1), n_rows, dtype=np.int32)
+    return pd.DataFrame(cols)
+
+
+def run_scale(n_rows: int = 10_000_000, n_cols: int = 50, seed: int = 0) -> dict[str, Any]:
+    """Time and peak memory (RSS of this process) of ``profile_dataframe`` on a large frame.
+
+    Acceptance (ROADMAP v0.7): 10M x 50 profiled in < 60 s within < 8 GB.
+    """
+    import threading
+
+    from mlkit.qc_eda.profile import profile_dataframe
+
+    try:
+        import psutil
+
+        proc: Any = psutil.Process()
+    except ImportError:  # pragma: no cover - psutil ships with most environments
+        proc = None
+    t0 = time.perf_counter()
+    df = make_wide_frame(n_rows, n_cols, seed)
+    gen_s = time.perf_counter() - t0
+    peak = [proc.memory_info().rss if proc else 0]
+    stop = threading.Event()
+
+    def watch() -> None:
+        while not stop.is_set():
+            peak[0] = max(peak[0], proc.memory_info().rss)
+            stop.wait(0.05)
+
+    watcher = threading.Thread(target=watch, daemon=True)
+    if proc:
+        watcher.start()
+    t1 = time.perf_counter()
+    prof = profile_dataframe(df)
+    profile_s = time.perf_counter() - t1
+    stop.set()
+    if proc:
+        watcher.join()
+    peak_gb = peak[0] / 1e9
+    return {
+        "rows": n_rows,
+        "cols": n_cols,
+        "frame_gb": round(float(df.memory_usage(deep=True).sum()) / 1e9, 2),
+        "generate_s": round(gen_s, 1),
+        "profile_s": round(profile_s, 1),
+        "peak_rss_gb": round(peak_gb, 2),
+        "sampled_rows": prof.sampled_rows,
+        "passed": profile_s < 60 and (proc is None or peak_gb < 8),
+    }
 
 
 # ------------------------------------------------------------------------------ runner
@@ -359,7 +634,11 @@ def run_case(case: Case, seed: int = 0, with_eda: bool = True) -> dict[str, Any]
 
             from mlkit.qc_eda import run_eda
 
-            eda = run_eda(df, target="target", task_type=case.task_type)
+            eda = run_eda(
+                df,
+                target="target",
+                task_type="regression" if case.task_type == "forecasting" else case.task_type,
+            )
             for _, fig in eda.figures():
                 plt.close(fig)
             eda.to_html()
@@ -390,7 +669,12 @@ def run_case(case: Case, seed: int = 0, with_eda: bool = True) -> dict[str, Any]
         return row
     if case.metric is not None:
         name, minimum = case.metric
-        value = res.metrics["holdout"].get(name, float("nan"))
+        if "seasonal_naive" in res.metrics:
+            model_mae = res.metrics["holdout_forecast"]["mae"]
+            naive_mae = res.metrics["seasonal_naive"]["mae"]
+            row["mae"], row["naive_mae"] = round(model_mae, 4), round(naive_mae, 4)
+            row["skill"] = round(1 - model_mae / naive_mae, 4) if naive_mae else float("nan")
+        value = row["skill"] if name == "skill" else res.metrics["holdout"].get(name, float("nan"))
         row[name] = round(float(value), 4)
         ok = bool(value >= minimum)
         row["detail"] = f"{name}={value:.3f} (min {minimum}) champion={res.metrics.get('champion')}"

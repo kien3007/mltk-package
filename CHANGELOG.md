@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.8.0] - 2026-11-25
+
+Các mốc v0.5–v0.8 được phát hành cùng nhau (một PR, tag `v0.8.0`); mỗi mốc có mục riêng bên dưới.
+
+### Văn bản ngữ nghĩa
+- `TextFeatures(semantic="tfidf")` (mặc định): TF-IDF từ + n-gram ký tự, giảm chiều bằng TruncatedSVD (32 thành
+  phần), chỉ cần scikit-learn. `semantic="embedding"` dùng sentence-transformers nếu đã cài (tự lùi về TF-IDF nếu
+  chưa), `semantic=None` giữ hành vi cũ.
+- Ca benchmark `semantic_text` (tín hiệu nằm ở từ ngữ, không ở độ dài): AUC 0,50 (chỉ thống kê) → 0,85–0,87.
+
+### Nối nhiều bảng đúng thời điểm (ADR-011)
+- `point_in_time_features` / `PointInTimeAggregator`: mỗi dòng chỉ nhận sự kiện của chính đối tượng xảy ra **trước**
+  mốc `as_of` của dòng; số lượng, tổng, trung bình, độ lệch chuẩn theo toàn bộ quá khứ và từng cửa sổ; số ngày từ sự
+  kiện gần nhất/đầu tiên. Vector hóa hoàn toàn; cộng dồn riêng trong từng đối tượng.
+- Test bảo đảm thêm/xóa/sửa sự kiện sau mốc không đổi một giá trị đặc trưng nào. Ca benchmark `multi_table_pit`.
+
+## [0.7.0] - 2026-11-25
+
+### Dữ liệu lớn (ADR-011)
+- `ProfileOptions.max_rows` (mặc định 1 triệu): vượt ngưỡng, thống kê từng cột lấy từ mẫu; số dòng, tỉ lệ thiếu, số
+  dòng trùng (hash) và cột trùng vẫn chính xác. `DatasetProfile.sampled_rows`.
+- `predict_file` / `mlkit predict --chunksize N`: chấm file lớn theo khối, ghi dần ra CSV/Parquet. `iter_table`.
+- `read_table(engine="pyarrow")` cho CSV lớn.
+- EDA lấy mẫu phân tầng theo target (`stratified_sample`), giữ đủ lớp hiếm.
+- `mlkit benchmark --suite scale`: profile 10 triệu dòng × 50 cột trong 30 giây, RAM đỉnh 2,6 GB (tiêu chí < 60 giây,
+  < 8 GB).
+
+## [0.6.0] - 2026-11-25
+
+### Dự báo chuỗi thời gian (ADR-010)
+- `task_type: forecasting` (chuẩn hóa thành hồi quy + mục `forecasting: {horizon, season, lags, windows}`): đặc trưng
+  lag, rolling mean/std và seasonal naive, tất cả chỉ dùng target tại `t - horizon` trở về trước (chiến lược direct).
+  `season` tự dò bằng ACF; `lags < horizon` bị từ chối.
+- Nhiều chuỗi trong một mô hình (`group_col` = mã chuỗi). Với forecasting, CV luôn chia theo thời gian (không dùng
+  GroupKFold theo chuỗi).
+- Mỗi lần train ghi `holdout_forecast` (MAE, RMSE, sMAPE, MASE), `seasonal_naive` và `beats_seasonal_naive`.
+- `predict` cho bundle dự báo nhận lịch sử + các kỳ cần dự báo (target trống) và trả kèm `time_col` / `group_col`.
+- `mlkit.timeseries`: `backtest` (cuốn chiếu nhiều cửa sổ), `make_lag_features`, `forecast_metrics`,
+  `autocorrelation`, `detect_season`, `seasonal_decompose` (không cần statsmodels).
+- Biểu đồ `plot_acf`, `plot_decomposition`, `plot_forecast`.
+- QC không báo rò rỉ cho các cột lag do mlkit tạo.
+- Benchmark `mlkit benchmark --suite timeseries`: 3 bộ tổng hợp (offline, chạy trong CI) + 2 bộ OpenML (bike sharing
+  theo giờ, CO2 Mauna Loa). Cả 5 bộ đều vượt seasonal naive (skill 0,38–0,69).
+
+## [0.5.0] - 2026-11-25
+
+### Ensemble trong Arena
+- `ModelArena(ensemble="vote"|"stack", ensemble_top_k=3)`: soft voting hoặc stacking của top-k candidate, được CV trên
+  cùng các fold nên chỉ thắng khi thật sự tốt hơn. `metrics.json["ensemble_members"]`.
+
+### Preset và ngân sách thời gian
+- `modelling.preset`: `fast`, `balanced`, `best_quality` (khóa người dùng tự đặt luôn được ưu tiên).
+- `modelling.time_budget` (giây) tính cho cả `train()`. Ngân sách dựa trên chi phí CV đo được của từng candidate:
+  bỏ bớt candidate, rút ngắn tuning, hạ stacking xuống voting hoặc bỏ ensemble, bỏ hiệu chuẩn/chọn ngưỡng khi không
+  còn đủ thời gian. `ModelArena.timings_`, `skipped_`. Tuning dừng trước khi một trial có thể vượt hạn chót và dùng
+  lại kết quả CV của trial tốt nhất.
+
+### Nghiệm thu (15 ca OpenML)
+- Ensemble stack / vote không kém mô hình đơn tốt nhất ở 15/15 ca; trung bình 0,8527 → 0,8573 (stack).
+- `best_quality` với `time_budget=60`: 15/15 ca trong ngân sách (tối đa 52 giây, trung bình 37 giây); trung bình
+  0,8639 (1 ca giảm 0,007 < 0,01).
+
 ## [0.4.0] - 2026-11-25
 
 ### Tối ưu siêu tham số trong Arena

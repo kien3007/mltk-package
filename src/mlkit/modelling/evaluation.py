@@ -207,7 +207,8 @@ class CVEvaluator:
         """Return ``(train_idx, valid_idx)`` positional indices into ``X``.
 
         Split selection (first match wins):
-        - ``groups`` given (or ``cfg.group_col`` present in X) -> GroupKFold
+        - ``groups`` given (or ``cfg.group_col`` present in X) -> GroupKFold, except for
+          forecasting tasks where the group column is a series id and time decides
         - ``time_index`` given (or ``cfg.time_col`` set) -> TimeSeriesSplit in chronological
           order (sorted by ``time_index`` / ``cfg.time_col`` when available, otherwise rows are
           assumed to be ordered already); validation rows are always later than training rows
@@ -219,6 +220,8 @@ class CVEvaluator:
         if time_index is None and cfg and cfg.time_col and cfg.time_col in X.columns:
             time_index = X[cfg.time_col]
 
+        if groups is not None and getattr(cfg, "forecasting", None) and time_index is not None:
+            groups = None  # forecasting: series ids are not split keys, time is (ADR-010)
         if groups is not None:
             groups_arr = np.asarray(groups)
             n_splits = min(self.cv, len(np.unique(groups_arr)))

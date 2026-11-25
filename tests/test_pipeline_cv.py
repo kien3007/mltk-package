@@ -128,6 +128,12 @@ def test_all_registered_steps_are_cloneable():
             "secondary_df": pd.DataFrame({"k": [1], "v": [2.0]}),
             "join_key": "k",
         },
+        "features.point_in_time": {
+            "events": pd.DataFrame({"k": [1], "t": [0.0], "v": [2.0]}),
+            "key": "k",
+            "as_of": "cutoff",
+            "event_time": "t",
+        },
     }
     for name, cls in _REGISTRY.items():
         clone(cls(**special.get(name, {})))  # raises RuntimeError if __init__ mutates params

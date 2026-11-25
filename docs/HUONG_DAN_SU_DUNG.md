@@ -19,6 +19,7 @@ Mỗi công đoạn có một bảng tra cứu và một ví dụ ngắn chạy 
 | 6 | Tạo đặc trưng | `mlkit.features` | `DatetimeFeatures`, `TextFeatures`, `build_panel`, ... | |
 | 7 | Chọn đặc trưng | `mlkit.selection` | `VarianceFilter`, `CorrelationFilter`, `ModelImportanceSelector`, ... | |
 | 8 | Huấn luyện và chọn mô hình | `mlkit.modelling` | `ModelArena`, các `*Trainer`, `OptunaSearch` | |
+| 8b | Dự báo chuỗi thời gian | `mlkit.timeseries` | `backtest`, `make_lag_features`, `seasonal_decompose`, `detect_season` | |
 | 9 | Đánh giá | `mlkit.modelling` | `compute_metrics`, `CVEvaluator`, `compute_bootstrap_ci`, ... | |
 | 10 | Ghép pipeline và chạy trọn gói | `mlkit.core`, `mlkit.runner` | `Pipeline`, `train`, `build_default_pipeline` | `mlkit run` |
 | 11 | Đóng gói | `mlkit.core` | `save_bundle`, `load_bundle` | (tự động trong `mlkit run`) |
@@ -39,7 +40,8 @@ Mỗi công đoạn có một bảng tra cứu và một ví dụ ngắn chạy 
 
 | Hàm / class | Dùng để | Tham số chính | Trả về |
 |---|---|---|---|
-| `read_table(path)` | Đọc file theo đuôi: `.csv`, `.parquet`, `.feather`, `.xlsx`, `.json` | đường dẫn | `DataFrame` |
+| `read_table(path, engine=None)` | Đọc file theo đuôi: `.csv`, `.parquet`, `.feather`, `.xlsx`, `.json` | đường dẫn; `engine="pyarrow"` đọc CSV lớn nhanh hơn nhiều lần (ngày dạng ISO được đọc thành datetime) | `DataFrame` |
+| `iter_table(path, chunksize=200_000)` | Đọc CSV / Parquet theo từng khối (file lớn hơn RAM) | `chunksize` | iterator các `DataFrame` |
 | `write_table(df, path)` | Ghi file theo đuôi (csv / parquet / json) | `df`, đường dẫn | `Path` |
 | `TaskConfig(...)` | Toàn bộ cấu hình của bài toán | `task_type` (`classification`/`regression`), `target`, `id_col`, `time_col`, `group_col`, `cv_folds`, `test_size`, `column_types`, `metric_thresholds`, `modelling`, `monitoring`, `qc`, `steps` | `TaskConfig` |
 | `TaskConfig.from_yaml(path)` / `cfg.to_yaml(path)` | Đọc / ghi cấu hình YAML | đường dẫn | `TaskConfig` / — |
@@ -67,7 +69,7 @@ Mọi công đoạn sau (QC, EDA, tiền xử lý) đều dựa trên profile n�
 |---|---|---|---|
 | `profile_dataframe(df, y=None, task_type=None, options=None)` | Profile cả bảng và (tùy chọn) target | `df`, `y`, `options` | `DatasetProfile` |
 | `infer_column(series, name=None, opts=None)` | Profile một cột | Series | `ColumnProfile` |
-| `ProfileOptions(...)` | Tham số nhận diện và **chỉ định kiểu thủ công** | `overrides={"cột": "categorical"}`, `high_cardinality=50`, `sample_size=2000`... | `ProfileOptions` |
+| `ProfileOptions(...)` | Tham số nhận diện và **chỉ định kiểu thủ công** | `overrides={"cột": "categorical"}`, `high_cardinality=50`, `sample_size=2000`, `max_rows=1_000_000` (quá số dòng này, thống kê từng cột lấy từ mẫu ngẫu nhiên `max_rows` dòng; số dòng, tỉ lệ thiếu và số dòng trùng vẫn tính chính xác trên toàn bộ; `None` = luôn dùng hết) ... | `ProfileOptions`; `DatasetProfile.sampled_rows` cho biết đã lấy mẫu hay chưa |
 | `DatasetProfile` | Kết quả cho cả bảng | thuộc tính `columns`, `target`, `n_rows`, `duplicate_columns`; phương thức `to_frame()`, `columns_of("numeric", ...)`, `to_dict()` | |
 | `ColumnProfile` | Kết quả cho một cột | `semantic_type`, `coercion`, `missing_rate`, `n_unique`, `numeric` (thống kê), `notes`, `ambiguous` | |
 | `apply_coercion(series, semantic_type, coercion)` | Chuyển giá trị thô theo profile. Đây là hàm dùng chung cho mọi bước. | | Series đã chuyển |
@@ -133,7 +135,8 @@ print(qc.issues_frame_.head())
 
 | Hàm / class | Dùng để | Tham số chính | Trả về |
 |---|---|---|---|
-| `run_eda(df, target=None, ...)` | Phân tích toàn diện: profile, QC, liên hệ với target, giá trị thiếu, liên hệ giữa các cột | `target` (tên cột, có thể bỏ), `task_type`, `column_types`, `sample_rows=200_000`, `max_features=30`, `max_categories=20`, `n_bins=10`, `with_qc=True` | `EDAReport` |
+| `run_eda(df, target=None, ...)` | Phân tích toàn diện: profile, QC, liên hệ với target, giá trị thiếu, liên hệ giữa các cột | `target` (tên cột, có thể bỏ), `task_type`, `column_types`, `sample_rows=200_000` (lấy mẫu **phân tầng theo target** với bài toán phân loại, giữ đủ các lớp hiếm), `max_features=30`, `max_categories=20`, `n_bins=10`, `with_qc=True` | `EDAReport` |
+| `stratified_sample(df, n, by=None, min_per_group=200)` | Lấy `n` dòng theo tỉ lệ trong từng nhóm `by`, mỗi nhóm giữ tối thiểu `min_per_group` dòng | | `DataFrame` |
 | `EDAReport.profile` | Profile của dữ liệu | | `DatasetProfile` |
 | `EDAReport.qc` | Kết quả QC | | `QualityCheckStep` |
 | `EDAReport.target_association` | Mức liên hệ của từng cột với target, đã xếp hạng | | `DataFrame` (`feature`, `type`, `method`, `strength` ∈ [0, 1], `n`) |
@@ -258,11 +261,12 @@ print(enc.encoding_plan_, X5.shape)
 | Hàm / class | Dùng để | Tham số chính |
 |---|---|---|
 | `DatetimeFeatures` | Tách cột ngày thành `_year`, `_month`, `_day`, `_dayofweek`, `_is_weekend` (thêm `hour` nếu muốn) | `columns` (mặc định tự nhận), `extract_parts`, `drop_original=True` |
-| `TextFeatures` | Thay văn bản tự do bằng `_n_chars`, `_n_words`, `_digit_ratio`, `_upper_ratio`, `_punct_ratio`, `_is_missing` | `columns` (mặc định tự nhận cột kiểu `text`) |
+| `TextFeatures` | Thay văn bản tự do bằng thống kê (`_n_chars`, `_n_words`, `_digit_ratio`, `_upper_ratio`, `_punct_ratio`, `_is_missing`) **và nghĩa của văn bản** (`_sem0..k`: chủ đề, sắc thái) | `columns` (mặc định tự nhận cột kiểu `text`), `semantic="tfidf"` (TF-IDF từ + n-gram ký tự, giảm chiều bằng SVD; chỉ cần scikit-learn) \| `"embedding"` (sentence-transformers + PCA; cần `pip install sentence-transformers`, thiếu thì tự lùi về TF-IDF) \| `None` (chỉ thống kê), `n_components=32`, `embedding_model="all-MiniLM-L6-v2"` |
 | `RatioFeatures` | Tạo `a_div_b` (và `a_sub_b`) cho các cặp cột số | `pairs=[("a", "b")]`, `create_diff=True` |
 | `GroupAggFeatures` | Thống kê của cột số theo nhóm (ví dụ thu nhập trung bình theo nghề) | `group_cols`, `target_cols`, `aggregations=["mean", "std"]` |
 | `BinningFeatures` | Chia cột số thành bin theo phân vị (`<col>_bin`) | `columns`, `n_bins=5` |
-| `MultiTableAggregator` | Tổng hợp bảng phụ quan hệ 1-nhiều theo khóa. **Không dùng** cho bảng nhiều mốc thời gian (sẽ lọt thông tin tương lai); khi đó dùng `build_panel`. | `secondary_df`, `join_key`, `numeric_aggs`, `window_days` |
+| `MultiTableAggregator` | Tổng hợp bảng phụ quan hệ 1-nhiều theo khóa. **Không dùng** cho bảng nhiều mốc thời gian (sẽ lọt thông tin tương lai); khi đó dùng `PointInTimeAggregator` hoặc `build_panel`. | `secondary_df`, `join_key`, `numeric_aggs`, `window_days` |
+| `PointInTimeAggregator(events, key, as_of, event_time)` / `point_in_time_features(primary, events, ...)` | Nối bảng sự kiện **đúng thời điểm**: mỗi dòng của bảng chính chỉ nhận các sự kiện của chính đối tượng đó xảy ra **trước** mốc `as_of` của dòng (không lọt tương lai). Tạo `pit_count_*`, `pit_<cột>_sum/mean/std_*` (toàn bộ quá khứ và từng cửa sổ), `pit_days_since_last`, `pit_days_since_first` | `value_cols` (mặc định mọi cột số), `windows=[30, 90]` (ngày, hoặc đơn vị của cột thời gian dạng số), `prefix="pit_"`, `drop_as_of` |
 | `TemporalSpec` | Mô tả cách tổng hợp nhật ký sự kiện theo thời điểm | `entity_col`, `time_col`, `windows=(7, 28, 90)`, `sum_cols`, `nunique_cols`, `eligibility_days` |
 | `build_features(events, as_of, spec)` | Đặc trưng **tại một thời điểm**, chỉ dùng sự kiện có `time ≤ as_of`. Dùng khi chấm điểm. | | `DataFrame` theo đối tượng |
 | `build_labels(events, as_of, horizon, spec)` | Nhãn 1/0: có sự kiện trong `(as_of, as_of + horizon]` | | Series |
@@ -294,6 +298,22 @@ spec = TemporalSpec(entity_col="customer", time_col="day", windows=(7, 28), sum_
 panel = build_panel(events, cutoffs=range(60, 190, 7), horizon=7, spec=spec)     # để huấn luyện
 now = build_features(events, as_of=200, spec=spec)                                 # để chấm điểm
 print(panel.shape, now.columns.tolist()[:6])
+```
+
+Ví dụ nối bảng giao dịch đúng thời điểm (mỗi khách hàng có mốc cắt riêng):
+
+```python
+import numpy as np
+import pandas as pd
+
+from mlkit.features import point_in_time_features
+
+rng = np.random.default_rng(0)
+tx = pd.DataFrame({"customer": rng.integers(0, 50, 2000), "day": rng.uniform(0, 365, 2000),
+                   "amount": rng.lognormal(3, 0.5, 2000)})
+customers = pd.DataFrame({"customer": range(50), "cutoff": rng.uniform(200, 300, 50)})
+feats = point_in_time_features(customers, tx, key="customer", as_of="cutoff", event_time="day", windows=(30, 90))
+print(feats[["pit_count_all", "pit_count_30d", "pit_amount_mean_90d", "pit_days_since_last"]].head())
 ```
 
 ---
@@ -334,7 +354,7 @@ print(sel.selected_features_)
 
 | Hàm / class | Dùng để | Tham số chính | Trả về / thuộc tính |
 |---|---|---|---|
-| `ModelArena` | **So sánh nhiều mô hình bằng CV** với mô hình ngây thơ; chọn mô hình thắng; tùy chọn hiệu chuẩn xác suất và chọn ngưỡng; fit mô hình thắng trên toàn bộ dữ liệu | `cv=5`, `candidates=["linear", "random_forest", "lightgbm", "xgboost", "hist_gb", "extra_trees"]` (mặc định: 3 mô hình đầu), `models={"tên": estimator}` (thêm mô hình riêng), `handle_imbalance=True`, `calibration=None\|"sigmoid"\|"isotonic"\|"auto"`, `threshold=0.5\|"f1"\|"youden"`, `tuning={"n_trials": 20, "timeout": giây, "models": [...]}` (tối ưu siêu tham số bằng Optuna trên chính các fold CV; mặc định tối ưu mô hình tốt nhất; cần extra `tuning`), `enforce_baseline_gate=True` | `best_model_name_`, `best_estimator_`, `comparison_table_`, `cv_results_`, `decision_threshold_`, `calibration_`, `tuned_params_`; `predict`, `predict_proba` |
+| `ModelArena` | **So sánh nhiều mô hình bằng CV** với mô hình ngây thơ; chọn mô hình thắng; tùy chọn hiệu chuẩn xác suất và chọn ngưỡng; fit mô hình thắng trên toàn bộ dữ liệu | `cv=5`, `candidates=["linear", "random_forest", "lightgbm", "xgboost", "hist_gb", "extra_trees"]` (mặc định: 3 mô hình đầu), `models={"tên": estimator}` (thêm mô hình riêng), `handle_imbalance=True`, `calibration=None\|"sigmoid"\|"isotonic"\|"auto"`, `threshold=0.5\|"f1"\|"youden"`, `tuning={"n_trials": 20, "timeout": giây, "models": [...]}` (tối ưu siêu tham số bằng Optuna trên chính các fold CV; mặc định tối ưu mô hình tốt nhất; cần extra `tuning`), `ensemble=None\|"vote"\|"stack"` (thêm mô hình ensemble của top-k candidate, được CV trên cùng fold nên chỉ thắng khi thật sự tốt hơn), `ensemble_top_k=3`, `time_budget=giây` (ngân sách cho cả quá trình chọn mô hình, cố gắng tốt nhất: bỏ bớt candidate, rút ngắn tuning, bỏ ensemble khi sắp hết giờ), `enforce_baseline_gate=True` | `best_model_name_`, `best_estimator_`, `comparison_table_`, `cv_results_`, `decision_threshold_`, `calibration_`, `tuned_params_`, `ensemble_members_`, `skipped_`; `predict`, `predict_proba` |
 | `LinearTrainer` | Logistic regression (phân loại) / Ridge (hồi quy) | `C`, `handle_imbalance`, `task_type` | mô hình kiểu sklearn |
 | `RandomForestTrainer` | Random Forest | `n_estimators`, `max_depth`, `handle_imbalance`, `n_jobs` | |
 | `LGBMTrainer` | LightGBM | `n_estimators`, `learning_rate`, `num_leaves`, `handle_imbalance`, `**kwargs` (mọi tham số của LightGBM) | |
@@ -344,6 +364,7 @@ print(sel.selected_features_)
 | `DummyTrainer` | Mô hình ngây thơ (đoán theo tỉ lệ / trung bình) dùng làm mốc so sánh | `task_type` | |
 | `SklearnModelWrapper(estimator)` | Dùng bất kỳ mô hình sklearn nào như một trainer của mlkit | estimator | |
 | `CalibratedModelWrapper(base, method)` | Hiệu chuẩn xác suất của một mô hình | `method="sigmoid"\|"isotonic"`, `cv=3` | |
+| `resolve_modelling(modelling)` (`mlkit.modelling.presets`) | Ghép preset `modelling.preset` với các khóa bạn tự đặt (khóa của bạn luôn được ưu tiên). `fast`: linear + LightGBM, CV 3 fold; `balanced`: linear + random forest + LightGBM + ensemble vote; `best_quality`: 5–6 họ mô hình, tuning 30 trial, ensemble stack, hiệu chuẩn tự động. Dùng chung với `time_budget` | `modelling` (dict) | dict đã ghép |
 | `OptunaSearch(estimator_cls, space, n_trials)` | Tối ưu siêu tham số bằng CV (cần extra `tuning`) | `estimator_cls` (ví dụ `LGBMTrainer`), `space` (`LGBM_SPACE`, `RF_SPACE`, `LINEAR_SPACE` hoặc hàm của bạn), `n_trials`, `cv`, `timeout` | `best_params_`, `best_score_`, `best_estimator_`, `trials_dataframe()` |
 
 Mọi trainer có chung API: `fit(X, y)`, `predict(X)`, `predict_proba(X)` (phân loại), `feature_importances_`. Tất cả
@@ -366,10 +387,78 @@ arena.fit(X, y, cfg=cfg)
 print(arena.comparison_table_)
 print(arena.best_model_name_, arena.decision_threshold_)
 
+stacked = ModelArena(cv=3, candidates=["linear", "lightgbm", "random_forest"], ensemble="stack", time_budget=120)
+stacked.fit(X, y, cfg=cfg)
+print(stacked.best_model_name_, stacked.ensemble_members_, stacked.skipped_)
+
 search = OptunaSearch(estimator_cls=LGBMTrainer, space=LGBM_SPACE, n_trials=3, cv=3)
 search.fit(X, y, cfg=cfg)
 print(search.best_params_, round(search.best_score_, 4))
 ```
+
+Cấu hình YAML tương đương khi chạy trọn gói (`mlkit train`):
+
+```yaml
+modelling:
+  preset: best_quality     # fast | balanced | best_quality
+  time_budget: 600         # giây
+  ensemble: vote           # ghi đè giá trị của preset
+```
+
+---
+
+## 8b. Dự báo chuỗi thời gian (`mlkit.timeseries`)
+
+Bài toán dự báo là hồi quy trên các đặc trưng lag của chính target theo thời gian. `task_type: forecasting` bật chế
+độ này: mỗi dòng là một kỳ (ngày, giờ, tháng...) của một chuỗi (`time_col`), có thể nhiều chuỗi (`group_col` là mã
+chuỗi, một mô hình chung cho tất cả). Mọi đặc trưng của dòng `t` chỉ dùng giá trị target từ `t - horizon` trở về
+trước, nên mô hình dự báo trước `horizon` kỳ. CV và holdout đều chia theo thời gian. Mỗi lần train đều so với
+baseline **seasonal naive** (lấy giá trị cùng pha của mùa trước).
+
+| Hàm | Dùng để làm gì | Tham số chính | Trả về |
+|---|---|---|---|
+| `TaskConfig(task_type="forecasting", ...)` | Khai báo bài toán dự báo (được chuẩn hóa thành `regression` + mục `forecasting`) | `time_col` (bắt buộc), `group_col`, `forecasting={"horizon": 7, "season": 7, "lags": [...], "windows": [...]}` (`season` tự dò bằng ACF nếu bỏ trống; `lags` phải ≥ `horizon`) | `TaskConfig` (`cfg.is_forecasting`) |
+| `train(cfg, df)` | Tạo đặc trưng lag/rolling rồi chạy pipeline như thường | | `metrics["holdout_forecast"]` (`mae`, `rmse`, `smape`, `mase`), `metrics["seasonal_naive"]`, `metrics["beats_seasonal_naive"]`, `metrics["forecasting"]` (season/lags thực dùng) |
+| `predict_bundle(bundle, df)` | Dự báo: truyền **lịch sử** (có target) nối với **các kỳ cần dự báo** (target để trống) | | dòng nào cũng được chấm; lọc các kỳ tương lai theo `time_col` |
+| `backtest(cfg, df, n_windows=3, window=None)` | Đánh giá cuốn chiếu: với mỗi mốc cắt, train trên quá khứ và chấm cửa sổ kế tiếp | `n_windows`, `window` (số kỳ) | DataFrame mỗi cửa sổ: `model_*`, `naive_*`, `beats_naive` |
+| `make_lag_features(df, target, time_col, group_col, horizon, season, lags, windows)` | Chỉ tạo đặc trưng (lag, rolling mean/std, seasonal naive) | | `(frame, options)` |
+| `forecast_metrics(y, pred, scale)` | MAE, RMSE, sMAPE (%), MASE (`scale` = MAE của seasonal naive trong tập train) | | dict |
+| `autocorrelation(series, max_lag)` / `detect_season(series)` | ACF; chu kỳ mùa vụ khả dĩ nhất (đỉnh ACF) | | mảng / `int` hoặc `None` |
+| `seasonal_decompose(series, period)` | Phân rã cộng tính cổ điển | `period` | DataFrame `observed`, `trend`, `seasonal`, `resid` |
+| `plot_acf`, `plot_decomposition`, `plot_forecast` (`mlkit.viz`) | Biểu đồ ACF (có dải nhiễu trắng), phân rã 4 tầng, dự báo so với thực tế | | `Figure` |
+
+```python
+import numpy as np
+import pandas as pd
+
+from mlkit.core import TaskConfig
+from mlkit.runner import train
+from mlkit.timeseries import backtest, detect_season, seasonal_decompose
+from mlkit.viz import plot_acf, plot_decomposition
+
+rng = np.random.default_rng(0)
+days = pd.date_range("2024-01-01", periods=300, freq="D")
+sales = pd.concat(
+    [
+        pd.DataFrame({"store": s, "date": days,
+                      "sales": 50 + 10 * k + 8 * np.sin(2 * np.pi * np.arange(300) / 7) + rng.normal(0, 2, 300)})
+        for k, s in enumerate(["a", "b", "c"])
+    ],
+    ignore_index=True,
+)
+one = sales[sales.store == "a"]["sales"]
+print(detect_season(one), seasonal_decompose(one, 7)[["trend", "seasonal"]].dropna().head(3))
+plot_acf(one); plot_decomposition(one, 7)
+
+cfg = TaskConfig(task_type="forecasting", target="sales", time_col="date", group_col="store",
+                 forecasting={"horizon": 7}, cv_folds=3, modelling={"candidates": ["linear", "lightgbm"]})
+res = train(cfg, sales)
+print(res.metrics["holdout_forecast"]["mae"], res.metrics["seasonal_naive"]["mae"], res.metrics["beats_seasonal_naive"])
+print(backtest(cfg, sales, n_windows=2)[["cutoff", "model_mae", "naive_mae", "beats_naive"]])
+```
+
+Benchmark riêng cho dự báo: `mlkit benchmark --suite timeseries` (3 bộ tổng hợp chạy offline + 2 bộ OpenML: bike
+sharing theo giờ, CO2 Mauna Loa theo tuần); mỗi bộ phải có `skill = 1 - MAE / MAE(seasonal naive)` vượt ngưỡng.
 
 ---
 
@@ -502,6 +591,7 @@ print(predict_frame(pipeline, cfg, metadata, new, threshold=0.3)[["score", "pred
 | `feature_contributions(pipeline, X, task_type, method)` | Ma trận đóng góp đầy đủ (dòng × cột gốc) | như trên | `(DataFrame, phương pháp)` |
 | `permutation_importance(pipeline, X, y, task_type, n_repeats=5)` | Mức giảm điểm (AUC hoặc R²) khi xáo trộn một cột gốc, chạy lại toàn pipeline | `y` đã mã hóa như lúc train (`prepare_target`) | `DataFrame`: `feature`, `importance_mean`, `importance_std` |
 | `predict_bundle(..., explain=k)` / `mlkit predict --explain k` / `POST /predict {"explain": k}` | Kèm lý do vào kết quả dự đoán | | thêm cột `reason_*` |
+| `predict_file(bundle, data_path, out_path, chunksize=200_000)` / `mlkit predict ... --out F --chunksize N` | Chấm file lớn theo từng khối, ghi dần ra `.csv` / `.parquet`; RAM chỉ cần cho một khối | `chunksize`, `threshold`, `explain` | số dòng đã chấm |
 
 Đơn vị của `impact`:
 - phương pháp `linear`: log-odds (phân loại) hoặc đơn vị của target (hồi quy);
@@ -635,11 +725,11 @@ print(run_suite(["leaky_feature"], with_eda=False)[["case", "passed"]])
 |---|---|---|
 | `mlkit eda DATA --target T --out F.html [--type C=K]` | 1–4 | `run_eda(...).to_html(...)` |
 | `mlkit run CONFIG --out DIR [--html-report F]` | 0, 5–11 | `train(cfg, df, output_dir=...)` |
-| `mlkit predict BUNDLE DATA [--out F] [--threshold T] [--explain K]` | 12 | `predict_bundle(..., explain=K)` |
+| `mlkit predict BUNDLE DATA [--out F] [--threshold T] [--explain K] [--chunksize N]` | 12 | `predict_bundle(..., explain=K)` / `predict_file(...)` |
 | `mlkit monitor BUNDLE DATA [--out F] [--fail-on warn]` | 13 | `monitor_bundle(...)` |
 | `mlkit evaluate BUNDLE DATA [--by COL] [--out F]` | 13 | `evaluate_bundle(...)` |
 | `mlkit serve BUNDLE [--port P]` | 14 | `create_app(...)` |
-| `mlkit steps` / `mlkit benchmark [--suite openml]` | 15 | `list_steps()` / `run_suite(...)` |
+| `mlkit steps` / `mlkit benchmark [--suite openml\|timeseries\|scale]` | 15 | `list_steps()` / `run_suite(...)` |
 
 **Mã thoát:**
 - `0`: thành công.

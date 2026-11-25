@@ -138,15 +138,18 @@ mlkit eda data.csv --target y --type stars=categorical --type order_day=datetime
 ### Benchmark tính tổng quát
 
 ```bash
-mlkit benchmark                 # 16 dataset, mỗi dataset một kỳ vọng (thoát mã 1 nếu có ca trượt)
+mlkit benchmark                 # 18 dataset, mỗi dataset một kỳ vọng (thoát mã 1 nếu có ca trượt)
 mlkit benchmark --suite openml  # 15 dataset thật từ openml.org (cần mạng; CI chạy hằng tuần)
+mlkit benchmark --suite timeseries  # 5 bài dự báo, phải vượt baseline seasonal naive
+mlkit benchmark --suite scale   # profile 10 triệu dòng x 50 cột: thời gian và RAM đỉnh
 MLKIT_FUZZ_EXAMPLES=400 uv run pytest tests/test_robustness.py -k fuzz   # fuzz test sâu
 uv run pytest -m benchmark      # cùng bộ ca, dạng test (CI chạy ở job riêng)
 ```
 
 Bộ ca gồm: sklearn (breast cancer, diabetes, wine), mất cân bằng 1%, 400 category, kiểu dữ liệu bẩn, văn bản tự do,
 thiếu dữ liệu có ý nghĩa, hiệu ứng theo thứ trong tuần, dữ liệu theo nhóm, dữ liệu rộng (500 cột), hồi quy lệch,
-tên cột là số, toàn category, rất nhỏ (80 dòng), và một feature rò rỉ (QC phải chặn).
+tên cột là số, toàn category, rất nhỏ (80 dòng), văn bản mang nghĩa (sắc thái nằm ở từ ngữ), bảng giao dịch
+nối đúng thời điểm, và một feature rò rỉ (QC phải chặn).
 
 ## 3b. Chạy qua dòng lệnh (CLI)
 

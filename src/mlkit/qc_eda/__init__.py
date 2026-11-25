@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from mlkit.qc_eda.eda import EDAReport, association, correlation_ratio, cramers_v, run_eda
+from mlkit.qc_eda.eda import (
+    EDAReport,
+    association,
+    correlation_ratio,
+    cramers_v,
+    run_eda,
+    stratified_sample,
+)
 from mlkit.qc_eda.profile import (
     ColumnProfile,
     DatasetProfile,
@@ -25,5 +32,6 @@ __all__ = [
     "profile_dataframe",
     "run_eda",
     "run_qc",
+    "stratified_sample",
     "univariate_signal",
 ]
