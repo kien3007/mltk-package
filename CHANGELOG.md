@@ -18,6 +18,14 @@ Bao gồm mốc v0.3 (dưới đây) cùng toàn bộ phần **nền tảng dữ
 - Metric nhị phân mới: `pr_auc` (average precision) và `log_loss`; cả hai dùng được trong `metric_thresholds`
   (`log_loss` theo chiều thấp hơn là tốt hơn).
 
+### Notebook kiểm thử toàn bộ chức năng
+- `notebooks/mlkit_full_test.ipynb`: 21 phần, 162 kiểm tra, chạy qua mọi công đoạn (dữ liệu, profile, QC, EDA, 20 biểu
+  đồ, tiền xử lý, đặc trưng, chọn đặc trưng, 7 trainer cho 3 loại bài toán, đánh giá, pipeline, bundle, dự đoán, giám
+  sát, REST API, MLflow, CLI, bước tự viết, độ bền, benchmark). CI chạy lại qua `tests/test_notebook.py` (`pytest -m docs`).
+- Lỗi do notebook phát hiện:
+  - các trainer thiếu `score()` theo quy ước sklearn, làm `learning_curve` / `cross_val_score` crash;
+  - docstring hướng dẫn backend MLflow dạng file, vốn bị MLflow ≥ 3 từ chối (chuyển sang SQLite).
+
 ### Quy trình nâng cấp định kỳ
 - `docs/ROADMAP.md`: bảng năng lực so với các thư viện tham chiếu, nhịp nâng cấp, chính sách phiên bản/deprecation,
   cổng chất lượng, lộ trình v0.4 → v1.0.

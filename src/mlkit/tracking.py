@@ -5,7 +5,7 @@ Enable from config::
     tracking:
       mlflow: true
       experiment: adult-income      # optional
-      tracking_uri: file:./mlruns   # optional
+      tracking_uri: sqlite:///mlflow.db   # optional; MLflow >= 3 rejects the plain file store
 """
 
 from __future__ import annotations
