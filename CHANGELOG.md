@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.4.0] - 2026-11-25
+
+### Tối ưu siêu tham số trong Arena
+- `modelling.tuning: {n_trials, timeout, models}` chạy Optuna (TPE) trên **cùng các fold** với các candidate khác; mô hình
+  tối ưu xuất hiện dưới tên `"<model> (tuned)"` trong bảng so sánh và chỉ thắng khi thật sự tốt hơn trên CV.
+- Mặc định tối ưu họ mô hình tốt nhất; hỗ trợ linear, random forest, extra trees, hist GB, LightGBM, XGBoost.
+- Tham số tìm được lưu ở `ModelArena.tuned_params_` và `metrics.json["tuned_params"]`.
+- Nghiệm thu OpenML (15 ca, `n_trials=15`): trung bình 0,8527 → 0,8573; 8 ca tăng, 1 ca giảm 0,0076 (pima), còn lại giữ nguyên.
+
+### Giải thích dự đoán (`mlkit.explain`)
+- `explain_frame(pipeline, X, top_k, method)`: top lý do cho từng dòng (`reason_i`, `reason_i_impact`), quy về cột gốc
+  (one-hot/target encoding được cộng dồn). Phương pháp: hệ số tuyến tính, SHAP TreeExplainer, hoặc ablation (mọi mô hình).
+- `feature_contributions` và `permutation_importance` (ROC-AUC / R²).
+- `predict --explain K`, `predict_bundle(..., explain=K)` và trường `explain` của REST `/predict`.
+
+### Tiền xử lý
+- `CategoricalEncoder` chiến lược `target_mc`: target encoding theo từng lớp (out-of-fold) cho bài toán 3–20 lớp.
+
 ## [0.3.0] - 2026-11-25
 
 Bao gồm mốc v0.3 (dưới đây) cùng toàn bộ phần **nền tảng dữ liệu** (ADR-007) và **độ bền tầng dữ liệu** (ADR-008)

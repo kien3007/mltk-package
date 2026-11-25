@@ -81,7 +81,7 @@ Mỗi mốc có tiêu chí nghiệm thu đo được. Thứ tự có thể đổ
 | Mốc | Chủ đề | Nội dung | Nghiệm thu |
 |---|---|---|---|
 | **v0.3** ✅ | Nhiều lớp và mô hình phổ biến | Phân loại nhiều lớp end-to-end; `HistGBTrainer`, `ExtraTreesTrainer`; metric `pr_auc`, `log_loss`; hạ tầng nâng cấp (Dependabot, workflow phát hành, tài liệu này) | wine và cmc chuyển từ "bị từ chối" sang được huấn luyện (AUC 1,00 / 0,73) |
-| **v0.4** | Tối ưu và giải thích | Tối ưu siêu tham số ngay trong Arena (`modelling.tuning: {n_trials, timeout}`); giải thích cho từng dự đoán (top lý do theo SHAP) trong `predict` và `/predict`; permutation importance; target encoding theo từng lớp cho bài toán nhiều lớp | Trung bình AUC/R² trên bộ OpenML tăng; `predict --explain` có test |
+| **v0.4** ✅ | Tối ưu và giải thích | Tối ưu siêu tham số ngay trong Arena (`modelling.tuning: {n_trials, timeout}`); giải thích cho từng dự đoán (top lý do theo SHAP) trong `predict` và `/predict`; permutation importance; target encoding theo từng lớp cho bài toán nhiều lớp | Trung bình AUC/R² trên bộ OpenML tăng; `predict --explain` có test — đạt: 0,8527 → 0,8573 (8 tăng / 1 giảm < 0,01) |
 | **v0.5** | Ensemble và preset | Stacking/blending top-k trong Arena; preset `fast` / `balanced` / `best_quality` với ngân sách thời gian | Ensemble không kém mô hình đơn tốt nhất trên ≥ 13/15 ca OpenML; preset tôn trọng ngân sách ±10% |
 | **v0.6** | Chuỗi thời gian | Bài toán dự báo (`task_type: forecasting`): đặc trưng lag/rolling, backtest theo cửa sổ thời gian; EDA mùa vụ (ACF, phân rã) | Thêm ≥ 3 dataset chuỗi thời gian vào benchmark; vượt baseline "seasonal naive" |
 | **v0.7** | Dữ liệu lớn | Backend Polars/PyArrow cho profile và dựng đặc trưng; chấm điểm theo khối; lấy mẫu phân tầng cho EDA | Profile 10 triệu dòng × 50 cột dưới 60 giây và trong 8 GB RAM (ca benchmark mới) |
@@ -93,3 +93,4 @@ Mỗi mốc có tiêu chí nghiệm thu đo được. Thứ tự có thể đổ
 | Ngày | Phiên bản | Ghi chú |
 |---|---|---|
 | 2026-11-25 | 0.3.0 | Lập kế hoạch; hoàn thành mốc v0.3 |
+| 2026-11-25 | 0.4.0 | Hoàn thành mốc v0.4 (tuning, giải thích dự đoán) |

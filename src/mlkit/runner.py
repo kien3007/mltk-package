@@ -132,6 +132,7 @@ def build_default_pipeline(cfg: TaskConfig) -> Pipeline:
                 handle_imbalance=bool(modelling.get("handle_imbalance", True)),
                 calibration=modelling.get("calibration"),
                 threshold=modelling.get("threshold", 0.5),
+                tuning=modelling.get("tuning"),
             ),
         ),
     ]
@@ -384,6 +385,7 @@ def train(
         metrics["cv_scope"] = arena.cv_scope_
         metrics["calibration"] = arena.calibration_
         metrics["decision_threshold"] = arena.decision_threshold_
+        metrics["tuned_params"] = getattr(arena, "tuned_params_", {})
         metrics["cv"] = {
             k: v
             for k, v in arena.cv_results_.get(arena.best_model_name_, {}).items()
@@ -478,6 +480,7 @@ def predict_frame(
     metadata: dict[str, Any],
     df: pd.DataFrame,
     threshold: float | None = None,
+    explain: int = 0,
 ) -> pd.DataFrame:
     """Score a DataFrame with a loaded bundle and return a predictions frame.
 
@@ -513,14 +516,20 @@ def predict_frame(
             out["label"] = out["prediction"].map(inverse)
     else:
         out["prediction"] = pipeline.predict(X)
-    return out.reset_index(drop=True)
+    out = out.reset_index(drop=True)
+    if explain:
+        from mlkit.explain import explain_frame
+
+        reasons = explain_frame(pipeline, X, task_type=cfg.task_type, top_k=int(explain))
+        out = pd.concat([out, reasons], axis=1)
+    return out
 
 
 def predict_bundle(
-    bundle_path: str | Path, df: pd.DataFrame, threshold: float | None = None
+    bundle_path: str | Path, df: pd.DataFrame, threshold: float | None = None, explain: int = 0
 ) -> pd.DataFrame:
     pipeline, cfg, metadata = load_bundle(bundle_path)
-    return predict_frame(pipeline, cfg, metadata, df, threshold=threshold)
+    return predict_frame(pipeline, cfg, metadata, df, threshold=threshold, explain=explain)
 
 
 # ---------------------------------------------------------------------- monitor

@@ -93,11 +93,17 @@ def cmd_run(
 
 
 def cmd_predict(
-    bundle_path: str, data_path: str, out_path: str | None = None, threshold: float | None = None
+    bundle_path: str,
+    data_path: str,
+    out_path: str | None = None,
+    threshold: float | None = None,
+    explain: int = 0,
 ) -> int:
     """Score a batch file with a saved bundle."""
     try:
-        preds = predict_bundle(bundle_path, read_table(data_path), threshold=threshold)
+        preds = predict_bundle(
+            bundle_path, read_table(data_path), threshold=threshold, explain=explain
+        )
     except (MLKitError, FileNotFoundError, ValueError) as exc:
         logger.error("%s: %s", type(exc).__name__, exc)
         return 1
@@ -295,6 +301,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Decision threshold (classification). Default: the threshold stored in the bundle",
     )
+    pred_p.add_argument(
+        "--explain",
+        type=int,
+        default=0,
+        metavar="K",
+        help="Add the top-K reasons per row (reason_i, reason_i_impact)",
+    )
 
     mon_p = sub.add_parser("monitor", help="Check a batch for drift against a saved bundle")
     mon_p.add_argument("bundle")
@@ -369,7 +382,13 @@ def main(argv: list[str] | None = None) -> None:
             args.config, data_path=args.data, output_dir=args.out, html_report=args.html_report
         )
     elif args.command == "predict":
-        code = cmd_predict(args.bundle, args.data, out_path=args.out, threshold=args.threshold)
+        code = cmd_predict(
+            args.bundle,
+            args.data,
+            out_path=args.out,
+            threshold=args.threshold,
+            explain=args.explain,
+        )
     elif args.command == "monitor":
         code = cmd_monitor(args.bundle, args.data, out_path=args.out, fail_on=args.fail_on)
     elif args.command == "evaluate":

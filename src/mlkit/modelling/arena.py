@@ -48,6 +48,7 @@ class ModelArena(BaseStep):
         calibration: str | None = None,
         calibration_cv: int = 3,
         threshold: str | float = 0.5,
+        tuning: dict[str, Any] | None = None,
     ) -> None:
         """
         Parameters (selection of)
@@ -71,6 +72,7 @@ class ModelArena(BaseStep):
         self.calibration = calibration
         self.calibration_cv = calibration_cv
         self.threshold = threshold
+        self.tuning = tuning
 
         self.best_model_name_: str = ""
         self.best_estimator_: Any = None
@@ -129,6 +131,8 @@ class ModelArena(BaseStep):
                 ),
             ),
         }
+        self._label_to_key = {label: key for key, (label, _) in factories.items()}
+        self._key_to_label = {key: label for key, (label, _) in factories.items()}
         zoo: dict[str, Any] = {"Baseline (Dummy)": DummyTrainer(task_type=task_type)}
         for key in self.candidates if self.candidates is not None else DEFAULT_CANDIDATES:
             if key not in factories:
@@ -211,7 +215,15 @@ class ModelArena(BaseStep):
 
             records.append(rec)
 
+        self.tuned_params_: dict[str, dict[str, Any]] = {}
+        if self.tuning:
+            for name, model, res in self._tune(evaluator, folds, task_type, eval_scores):
+                self.cv_results_[name] = res
+                eval_scores[name] = (res["primary_score"], model)
+                records.append(self._record(name, res, task_type))
         self.comparison_table_ = pd.DataFrame(records)
+        # medians of the model's input features: background for explanations (mlkit.explain)
+        self.feature_medians_ = X.median(numeric_only=True).to_dict()
 
         # 2. Select winner (highest AUC for classification, lowest RMSE for regression)
         candidates = {k: v for k, v in eval_scores.items() if "Baseline" not in k}
@@ -265,6 +277,99 @@ class ModelArena(BaseStep):
             + f"; decision threshold={self.decision_threshold_:.4f}",
         )
         return self
+
+    @staticmethod
+    def _record(name: str, res: dict[str, Any], task_type: str) -> dict[str, Any]:
+        rec: dict[str, Any] = {"Model": name, "Score": round(res["primary_score"], 4)}
+        if task_type == "classification":
+            rec["ROC-AUC"] = f"{res.get('roc_auc_mean', 0):.4f} ± {res.get('roc_auc_std', 0):.4f}"
+            rec["Accuracy"] = f"{res.get('accuracy_mean', 0) * 100:.2f}%"
+            rec["F1"] = f"{res.get('f1_mean', 0):.4f}"
+        else:
+            rec["RMSE"] = f"{res.get('rmse_mean', 0):.4f} ± {res.get('rmse_std', 0):.4f}"
+            rec["R2"] = f"{res.get('r2_mean', 0):.4f}"
+            rec["MAE"] = f"{res.get('mae_mean', 0):.4f}"
+        return rec
+
+    def _tune(
+        self,
+        evaluator: CVEvaluator,
+        folds: list[FoldData],
+        task_type: TaskType,
+        eval_scores: dict[str, tuple[float, Any]],
+    ) -> list[tuple[str, Any, dict[str, Any]]]:
+        """Optuna search (TPE) on the arena's own CV folds; tuned models join the comparison.
+
+        ``tuning``: ``{"n_trials": 20, "timeout": None, "models": [candidate keys]}``. Without
+        ``models`` the best non-baseline candidate family is tuned.
+        """
+        import inspect
+
+        try:
+            import optuna
+        except ImportError:
+            self.report_.add(
+                "tuning",
+                "warn",
+                "Tuning requested but optuna is not installed (pip install 'mlkit[tuning]').",
+            )
+            return []
+        from mlkit.modelling.tuning import tunable_models
+
+        opts = dict(self.tuning or {})
+        n_trials = int(opts.get("n_trials", 20))
+        timeout = opts.get("timeout")
+        spaces = tunable_models()
+        keys = list(opts.get("models") or [])
+        if not keys:
+            higher = task_type == "classification"
+            ranked = sorted(
+                (k for k in eval_scores if "Baseline" not in k and k in self._label_to_key),
+                key=lambda k: eval_scores[k][0],
+                reverse=higher,
+            )
+            keys = [self._label_to_key[ranked[0]]] if ranked else []
+        unknown = [k for k in keys if k not in spaces]
+        if unknown:
+            raise ValueError(f"Cannot tune {unknown}; tunable: {sorted(spaces)}")
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        out = []
+        for key in keys:
+            cls, space = spaces[key]
+            base: dict[str, Any] = {"task_type": task_type, "random_state": self.random_state}
+            if "handle_imbalance" in inspect.signature(cls).parameters:
+                base["handle_imbalance"] = self.handle_imbalance
+
+            def objective(
+                trial: Any, cls: Any = cls, space: Any = space, base: Any = base
+            ) -> float:
+                params = space(trial)
+                trial.set_user_attr("params", params)
+                return float(
+                    evaluator.evaluate_folds(cls(**base, **params), folds)["primary_score"]
+                )
+
+            study = optuna.create_study(
+                direction="maximize" if task_type == "classification" else "minimize",
+                sampler=optuna.samplers.TPESampler(seed=self.random_state),
+            )
+            study.optimize(objective, n_trials=n_trials, timeout=timeout, catch=(Exception,))
+            completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+            if not completed:
+                self.report_.add("tuning", "warn", f"No successful trial for '{key}'.")
+                continue
+            params = dict(study.best_trial.user_attrs["params"])
+            model = cls(**base, **params)
+            res = evaluator.evaluate_folds(model, folds)
+            name = f"{self._key_to_label[key]} (tuned)"
+            self.tuned_params_[name] = params
+            self.report_.add(
+                "tuning",
+                "ok",
+                f"{name}: {len(completed)} trials, CV {res['primary_score']:.4f}, params {params}",
+            )
+            out.append((name, model, res))
+        return out
 
     def _select_calibration(
         self, evaluator: CVEvaluator, winner: Any, folds: list[FoldData]
