@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.0.0] - 2026-11-25
+
+Bản ổn định đầu tiên. Từ đây API công khai theo SemVer (xem `docs/ROADMAP.md` mục 2.2).
+
+### Phát hành
+- Tên trên PyPI: **`mltk-package`** (`pip install mltk-package`); tên import giữ nguyên `import mlkit`.
+- Giấy phép **MIT** (`LICENSE`); metadata PyPI đầy đủ (classifiers, URLs, `py.typed`).
+- `release.yml` có job đăng PyPI bằng trusted publishing (bật bằng biến repo `PUBLISH_PYPI=true`).
+- Trang tài liệu mkdocs (`mkdocs.yml`, workflow `docs.yml`): hướng dẫn, lộ trình, nhật ký thay đổi, ADR.
+
+### Đóng băng API
+- `tests/api_snapshot.json` + `tests/test_public_api.py`: 159 tên công khai cùng chữ ký; mọi thay đổi phải cập nhật
+  snapshot có chủ đích.
+
+### Bảo mật bundle (ADR-012, thay ADR-003)
+- Chữ ký HMAC-SHA256 của manifest khi có `MLKIT_BUNDLE_KEY` / `signing_key`; `load_bundle` / `verify_bundle` có khóa
+  từ chối bundle chưa ký, ký sai hoặc bị sửa **trước khi** unpickle. Không có khóa: hành vi như cũ.
+- skops đã được thử và không dùng được (không serialize `pandas.DataFrame` trong trạng thái pipeline).
+
+### Thay đổi không tương thích
+- Gỡ `ModelArena.custom_models` (dùng `models`) và `DriftMonitor.baseline_distributions_` (dùng `numeric_baselines_`).
+- Gỡ các mục `preprocessing:`, `features:`, `selection:` khỏi `TaskConfig` (chưa từng có tác dụng); nếu còn trong YAML
+  chúng bị bỏ qua kèm `UserWarning`. Dùng `steps:` để đổi tham số các bước.
+- Distribution đổi tên từ `mlkit` thành `mltk-package` (gợi ý cài extras trong thông báo lỗi đổi theo).
+
 ## [0.8.0] - 2026-11-25
 
 Các mốc v0.5–v0.8 được phát hành cùng nhau (một PR, tag `v0.8.0`); mỗi mốc có mục riêng bên dưới.

@@ -3205,7 +3205,7 @@ wheels = [
 ]
 
 [[package]]
-name = "mlkit"
+name = "mltk-package"
 source = { editable = "." }
 dependencies = [
     { name = "joblib" },

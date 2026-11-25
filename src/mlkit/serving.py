@@ -1,4 +1,4 @@
-"""HTTP model serving with FastAPI (``pip install 'mlkit[serve]'``).
+"""HTTP model serving with FastAPI (``pip install 'mltk-package[serve]'``).
 
 Endpoints:
     GET  /health    liveness + bundle info
@@ -24,7 +24,7 @@ def create_app(bundle_path: str | Path) -> Any:
         from fastapi import FastAPI, HTTPException
         from pydantic import BaseModel, Field
     except ImportError as exc:  # pragma: no cover - exercised only without extras
-        raise ImportError("Serving requires: pip install 'mlkit[serve]'") from exc
+        raise ImportError("Serving requires: pip install 'mltk-package[serve]'") from exc
 
     pipeline, cfg, metadata = load_bundle(bundle_path)
     baseline = metadata.get("baseline") or {}

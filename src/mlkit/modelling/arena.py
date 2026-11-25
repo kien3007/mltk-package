@@ -102,11 +102,6 @@ class ModelArena(BaseStep):
         evaluator = CVEvaluator(cv=self.cv, task_type=task_type, random_state=self.random_state)
         return evaluator.split(X, y, cfg=cfg, groups=groups, time_index=time_index)
 
-    @property
-    def custom_models(self) -> dict[str, Any] | None:
-        """Backward-compatible alias of ``models``."""
-        return self.models
-
     def _build_zoo(self, task_type: TaskType) -> dict[str, Any]:
         rs = self.random_state
         imb = (
@@ -446,7 +441,7 @@ class ModelArena(BaseStep):
             self.report_.add(
                 "tuning",
                 "warn",
-                "Tuning requested but optuna is not installed (pip install 'mlkit[tuning]').",
+                "Tuning requested but optuna is not installed (pip install 'mltk-package[tuning]').",
             )
             return []
         from mlkit.modelling.tuning import tunable_models

@@ -33,3 +33,8 @@ mlruns/
 # OS
 .DS_Store
 Thumbs.db
+
+# mkdocs build output (docs/adr and docs/CHANGELOG.md are copied in CI)
+site/
+docs/adr/
+docs/CHANGELOG.md

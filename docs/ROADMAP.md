@@ -53,9 +53,13 @@ Ký hiệu: ✅ có sẵn · ◐ có một phần, hoặc phải tự lắp · �
 | **Hằng quý** | Rà soát bảng năng lực và lộ trình; thêm dataset mới vào benchmark; gỡ các API đã hết hạn deprecation | Cập nhật tài liệu này |
 
 ### 2.2 Phiên bản và tương thích
-- **SemVer.** Trước 1.0, bản minor được phép đổi API, nhưng **mọi thay đổi không tương thích phải qua một bản
-  deprecation**: phát `DeprecationWarning` ở bản `0.x`, gỡ ở bản `0.(x+1)` hoặc muộn hơn. Thay đổi phải ghi trong
-  mục "Thay đổi không tương thích" của `CHANGELOG.md`.
+- **SemVer (từ 1.0).** API công khai được chụp trong `tests/api_snapshot.json`; `tests/test_public_api.py` thất bại khi
+  có tên bị gỡ, đổi chữ ký hoặc thêm mới mà không cập nhật snapshot. Quy tắc:
+  - bản **patch** (`1.0.x`): chỉ sửa lỗi, snapshot không đổi;
+  - bản **minor** (`1.x.0`): chỉ **thêm** (tên mới, tham số mới có giá trị mặc định);
+  - thay đổi không tương thích chỉ ở bản **major** (`2.0.0`), và phải qua một bản minor có `DeprecationWarning` trước
+    đó. Ghi vào mục "Thay đổi không tương thích" của `CHANGELOG.md`.
+- Trước 1.0 (lịch sử): bản minor được đổi API sau một bản deprecation.
 - Bundle mang `format_version`. Mỗi khi đổi định dạng phải có hướng dẫn chuyển đổi trong CHANGELOG.
 - Quyết định kiến trúc được ghi thành ADR mới trong `ADRs/`, kể cả khi thay thế ADR cũ (ví dụ ADR-009 thay ADR-004).
 
@@ -72,7 +76,9 @@ Ký hiệu: ✅ có sẵn · ◐ có một phần, hoặc phải tự lắp · �
 2. Merge PR vào `main` (CI xanh).
 3. Gắn tag `vx.y.z` và push tag. Workflow `release.yml` sẽ kiểm tra tag khớp `__version__`, chạy test cùng
    benchmark và ví dụ trong tài liệu, build wheel/sdist, rồi tạo GitHub Release kèm file build.
-4. (Từ 1.0) Đăng lên PyPI.
+4. (Từ 1.0) Job `pypi` trong `release.yml` đăng `mltk-package` lên PyPI bằng trusted publishing, khi biến repo
+   `PUBLISH_PYPI=true` (thiết lập một lần, xem đầu file workflow).
+5. Workflow `docs.yml` dựng lại trang tài liệu (mkdocs) ở mỗi lần push vào `main`.
 
 ## 3. Lộ trình theo mốc
 
@@ -86,7 +92,7 @@ Mỗi mốc có tiêu chí nghiệm thu đo được. Thứ tự có thể đổ
 | **v0.6** ✅ | Chuỗi thời gian | Bài toán dự báo (`task_type: forecasting`): đặc trưng lag/rolling, backtest theo cửa sổ thời gian; EDA mùa vụ (ACF, phân rã) | Thêm ≥ 3 dataset chuỗi thời gian vào benchmark; vượt baseline "seasonal naive" — đạt: 5 ca (3 offline + 2 OpenML), skill 0,38–0,69 |
 | **v0.7** ✅ | Dữ liệu lớn | Backend Polars/PyArrow cho profile và dựng đặc trưng; chấm điểm theo khối; lấy mẫu phân tầng cho EDA | Profile 10 triệu dòng × 50 cột dưới 60 giây và trong 8 GB RAM (ca benchmark mới) — đạt: 30 giây, 2,6 GB |
 | **v0.8** ✅ | Phi cấu trúc và nhiều bảng | Đặc trưng văn bản bằng embedding (extra `nlp`); tự join bảng quan hệ theo đúng thời điểm | Benchmark có ca văn bản vượt `TextFeatures` hiện tại; ca nhiều bảng không rò rỉ — đạt: AUC 0,50 → 0,87; test bất biến với sự kiện tương lai |
-| **v1.0** | Ổn định | Đóng băng API công khai; trang tài liệu (mkdocs); đăng PyPI; serialize bằng skops (ADR-003); gỡ toàn bộ API đã deprecated | Không thay đổi không tương thích trong 2 bản minor liên tiếp |
+| **v1.0** ✅ | Ổn định | Đóng băng API công khai (snapshot 159 tên); trang tài liệu (mkdocs); phát hành PyPI `mltk-package` (license MIT); ký bundle HMAC (ADR-012 thay ADR-003, vì skops không lưu được DataFrame); gỡ API đã deprecated | Không thay đổi không tương thích trong 2 bản minor liên tiếp (theo dõi từ 1.1, 1.2) |
 
 ## 4. Nhật ký rà soát
 
@@ -94,4 +100,5 @@ Mỗi mốc có tiêu chí nghiệm thu đo được. Thứ tự có thể đổ
 |---|---|---|
 | 2026-11-25 | 0.3.0 | Lập kế hoạch; hoàn thành mốc v0.3 |
 | 2026-11-25 | 0.4.0 | Hoàn thành mốc v0.4 (tuning, giải thích dự đoán) |
+| 2026-11-25 | 1.0.0 | Phát hành ổn định: đóng băng API, mkdocs, PyPI, ký bundle |
 | 2026-11-25 | 0.8.0 | Hoàn thành v0.5–v0.8 (ensemble/preset, dự báo, dữ liệu lớn, văn bản, nhiều bảng) |
