@@ -177,11 +177,6 @@ class DriftMonitor(BaseStep):
         self.prediction_baseline_ = self._numeric_snapshot(arr)
         return self
 
-    @property
-    def baseline_distributions_(self) -> dict[str, np.ndarray]:
-        """Backward-compatible view: reference sample per numeric feature."""
-        return {c: np.asarray(b["sample"]) for c, b in self.numeric_baselines_.items()}
-
     # --------------------------------------------------------- serialisation
     def to_dict(self) -> dict[str, Any]:
         return {

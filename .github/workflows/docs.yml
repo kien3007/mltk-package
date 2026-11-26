@@ -1,0 +1,48 @@
+name: Docs site
+
+# Builds the mkdocs site on every push to main and deploys it to GitHub Pages.
+# One-time setup: repository Settings -> Pages -> Source: "GitHub Actions".
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths: ["docs/**", "mkdocs.yml", "ADRs/**", "CHANGELOG.md", ".github/workflows/docs.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Collect ADRs and changelog into the docs tree
+        run: |
+          mkdir -p docs/adr
+          cp ADRs/*.md docs/adr/
+          cp CHANGELOG.md docs/CHANGELOG.md
+      - name: Build (strict)
+        run: uvx --with mkdocs-material==9.5.39 mkdocs build --strict
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

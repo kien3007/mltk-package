@@ -25,10 +25,16 @@
 Yêu cầu: Python >= 3.10 (khuyến nghị 3.11 hoặc 3.12 với [uv](https://github.com/astral-sh/uv)).
 
 ```bash
-pip install -e .                 # chỉ phần lõi (pandas, sklearn, lightgbm, ...)
-pip install -e ".[all]"          # toàn bộ tính năng tùy chọn
+pip install mltk-package          # chỉ phần lõi (pandas, sklearn, lightgbm, ...)
+pip install "mltk-package[all]"   # toàn bộ tính năng tùy chọn
+# trong code vẫn là: import mlkit
+
+# phát triển từ mã nguồn
+pip install -e ".[all]"
 uv sync --all-extras             # môi trường phát triển (kèm nhóm dev)
 ```
+
+Giấy phép: MIT (xem `LICENSE`). Tài liệu: <https://kien3007.github.io/mltk-package/>.
 
 | Extra | Nội dung |
 |---|---|

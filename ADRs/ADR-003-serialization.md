@@ -1,7 +1,7 @@
 # ADR-003: Serialization ưu tiên skops thay vì pickle
 
 ## Trạng thái
-Đã chốt
+Đã thay thế bởi ADR-012 (v1.0): skops không serialize được DataFrame trong pipeline; dùng chữ ký HMAC.
 
 ## Bối cảnh
 Pickle tiềm ẩn nguy cơ an ninh (arbitrary code execution) khi load artifact từ nguồn bên ngoài.

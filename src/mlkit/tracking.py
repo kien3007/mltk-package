@@ -1,4 +1,4 @@
-"""Optional experiment tracking with MLflow (``pip install 'mlkit[tracking]'``).
+"""Optional experiment tracking with MLflow (``pip install 'mltk-package[tracking]'``).
 
 Enable from config::
 
@@ -31,7 +31,7 @@ def log_to_mlflow(result: TrainResult, run_name: str | None = None) -> str:
     try:
         import mlflow
     except ImportError as exc:
-        raise MLKitError("MLflow tracking requires: pip install 'mlkit[tracking]'") from exc
+        raise MLKitError("MLflow tracking requires: pip install 'mltk-package[tracking]'") from exc
 
     opts = result.cfg.tracking
     if opts.get("tracking_uri"):

@@ -1,19 +1,28 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mlkit"
+name = "mltk-package"
 dynamic = ["version"]
-description = "A unified, production-ready 6-step tabular ML pipeline toolkit"
+description = "Tabular machine learning toolkit: data QC/EDA, leak-free pipelines, model arena, forecasting, bundles and monitoring"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "kien3007" }]
+keywords = ["machine-learning", "tabular", "automl", "data-quality", "eda", "forecasting", "mlops"]
 classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
 ]
 dependencies = [
     "pandas>=2.0.0",
@@ -47,6 +56,12 @@ all = [
     "openpyxl>=3.1.5",
 ]
 
+[project.urls]
+Homepage = "https://github.com/kien3007/mltk-package"
+Documentation = "https://kien3007.github.io/mltk-package/"
+Changelog = "https://github.com/kien3007/mltk-package/blob/main/CHANGELOG.md"
+Issues = "https://github.com/kien3007/mltk-package/issues"
+
 [project.scripts]
 mlkit = "mlkit.cli:main"
 
@@ -57,7 +72,7 @@ path = "src/mlkit/__init__.py"   # single source of truth for the package versio
 packages = ["src/mlkit"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/mlkit", "tests", "examples/*.py", "examples/*.yaml", "ADRs", "README.md", "CHANGELOG.md", "pyproject.toml"]
+include = ["src/mlkit", "tests", "examples/*.py", "examples/*.yaml", "ADRs", "README.md", "CHANGELOG.md", "LICENSE", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

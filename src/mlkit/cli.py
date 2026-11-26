@@ -208,7 +208,7 @@ def cmd_serve(bundle_path: str, host: str = "127.0.0.1", port: int = 8000) -> in
     try:
         import uvicorn
     except ImportError:
-        logger.error("Serving requires extras: pip install 'mlkit[serve]'")
+        logger.error("Serving requires extras: pip install 'mltk-package[serve]'")
         return 1
     from mlkit.serving import create_app
 
@@ -346,7 +346,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--fail-on", choices=["warn", "error"], default="error", help="Exit 2 at this severity"
     )
 
-    srv_p = sub.add_parser("serve", help="Serve a bundle over HTTP (requires mlkit[serve])")
+    srv_p = sub.add_parser("serve", help="Serve a bundle over HTTP (requires mltk-package[serve])")
     srv_p.add_argument("bundle")
     srv_p.add_argument("--host", default="127.0.0.1")
     srv_p.add_argument("--port", type=int, default=8000)

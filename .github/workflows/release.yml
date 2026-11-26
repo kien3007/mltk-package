@@ -1,7 +1,13 @@
 name: Release
 
-# Push a tag vX.Y.Z (matching mlkit.__version__) to publish a GitHub Release.
-# See docs/ROADMAP.md, section 2.4.
+# Push a tag vX.Y.Z (matching mlkit.__version__) to publish a GitHub Release and, when enabled,
+# upload the distribution "mltk-package" to PyPI. See docs/ROADMAP.md, section 2.4.
+#
+# PyPI uses trusted publishing (no token stored in the repo). One-time setup:
+#   1. pypi.org -> Publishing -> add a pending publisher: owner kien3007, repository mltk-package,
+#      workflow release.yml, environment pypi
+#   2. GitHub repo -> Settings -> Environments: create "pypi"
+#   3. GitHub repo -> Settings -> Variables: PUBLISH_PYPI = true
 on:
   push:
     tags: ["v*"]
@@ -44,3 +50,24 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "mlkit $GITHUB_REF_NAME" \
             --notes "See CHANGELOG.md for details."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    needs: release
+    if: vars.PUBLISH_PYPI == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/mltk-package/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

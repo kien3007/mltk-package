@@ -4,7 +4,7 @@ Tài liệu này trả lời câu hỏi: **ở mỗi công đoạn, dùng hàm/c
 Mỗi công đoạn có một bảng tra cứu và một ví dụ ngắn chạy được.
 
 > Các ví dụ được chạy tự động trong CI (`tests/test_docs.py`), dùng dữ liệu mẫu `examples/data/adult.csv`; hãy
-> chạy chúng từ thư mục gốc của repo. Cài đặt: `pip install -e ".[all]"` (cần extra `viz` cho biểu đồ và báo cáo HTML).
+> chạy chúng từ thư mục gốc của repo. Cài đặt: `pip install "mltk-package[all]"` (hoặc `pip install -e ".[all]"` từ mã nguồn) (cần extra `viz` cho biểu đồ và báo cáo HTML).
 
 ## Sơ đồ công đoạn
 
@@ -544,9 +544,13 @@ print(pipe.predict_proba(df.drop(columns="class").head(3))[:, 1])
 
 | Hàm | Dùng để | Tham số chính | Trả về |
 |---|---|---|---|
-| `save_bundle(pipeline, path, cfg, X_sample, baseline, metrics, report)` | Lưu pipeline cùng cấu hình, schema, baseline drift, metric, phiên bản thư viện và checksum (`train(..., output_dir=)` gọi hàm này) | | thư mục bundle |
-| `load_bundle(path, verify=True)` | Nạp bundle; kiểm tra checksum và cảnh báo khi phiên bản thư viện khác | | `(pipeline, cfg, metadata)`; `metadata` có `schema`, `baseline`, `metrics`, `report`, `versions` |
-| `verify_bundle(path)` | Chỉ kiểm tra tính toàn vẹn | | `dict` checksum; ném `ValidationError` nếu file bị sửa |
+| `save_bundle(pipeline, path, cfg, X_sample, baseline, metrics, report, signing_key=None)` | Lưu pipeline cùng cấu hình, schema, baseline drift, metric, phiên bản thư viện và checksum (`train(..., output_dir=)` gọi hàm này). Có khóa (`signing_key` hoặc biến môi trường `MLKIT_BUNDLE_KEY`) thì manifest được **ký HMAC-SHA256** | | thư mục bundle |
+| `load_bundle(path, verify=True, signing_key=None)` | Nạp bundle; kiểm tra checksum và cảnh báo khi phiên bản thư viện khác. Có khóa thì **từ chối trước khi unpickle** nếu bundle chưa ký, ký bằng khóa khác hoặc bị sửa | | `(pipeline, cfg, metadata)`; `metadata` có `schema`, `baseline`, `metrics`, `report`, `versions` |
+| `verify_bundle(path, signing_key=None)` | Chỉ kiểm tra tính toàn vẹn (và chữ ký nếu có khóa) | | `dict` checksum; ném `ValidationError` nếu file bị sửa |
+
+**Bảo mật bundle (ADR-012):** `pipeline.joblib` là pickle, nạp file từ nguồn lạ có thể thực thi mã. Ở môi trường
+production, đặt cùng một `MLKIT_BUNDLE_KEY` bí mật cho nơi train và nơi phục vụ (`mlkit serve`, `predict`): khi đó chỉ
+bundle do chính bạn ký mới được nạp.
 
 > ⚠️ Bundle dùng pickle: chỉ nạp bundle từ nguồn tin cậy.
 
@@ -736,6 +740,7 @@ print(run_suite(["leaky_feature"], with_eda=False)[["case", "passed"]])
 - `1`: lỗi đầu vào/cấu hình, hoặc không đạt cổng chặn.
 - `2`: có drift (`monitor`) hoặc vi phạm ngưỡng (`evaluate`).
 
-**Lưu ý về cấu hình:** các mục `preprocessing:`, `features:`, `selection:` trong `TaskConfig` hiện **chưa có tác
-dụng**. Để đổi tham số các bước, hãy dùng `steps:`, ví dụ
+**Lưu ý về cấu hình:** từ 1.0, các mục `preprocessing:`, `features:`, `selection:` đã bị gỡ khỏi `TaskConfig` (trước
+đây chúng không có tác dụng); nếu còn trong file YAML, chúng bị bỏ qua kèm cảnh báo. Để đổi tham số các bước, hãy
+dùng `steps:`, ví dụ
 `- {step: preprocessing.imputer, params: {add_indicator: auto}}`.

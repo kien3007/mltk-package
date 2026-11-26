@@ -37,9 +37,6 @@ class TaskConfig(BaseModel):
     # Stage-specific settings
     metric_thresholds: dict[str, float] = Field(default_factory=dict)
     qc: dict[str, Any] = Field(default_factory=dict)
-    preprocessing: dict[str, Any] = Field(default_factory=dict)
-    features: dict[str, Any] = Field(default_factory=dict)
-    selection: dict[str, Any] = Field(default_factory=dict)
     modelling: dict[str, Any] = Field(default_factory=dict)
     monitoring: dict[str, Any] = Field(default_factory=dict)
     #: Forecasting options (ADR-010): {horizon, season, lags, windows}. Set automatically by
@@ -53,6 +50,26 @@ class TaskConfig(BaseModel):
     #: Per-column semantic type overrides, honoured by QC, EDA and preprocessing alike, e.g.
     #: {"stars": "categorical", "order_day": "datetime:yyyymmdd", "notes": "ignore"}.
     column_types: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _removed_keys(cls, data: Any) -> Any:
+        # removed in 1.0: these sections were never read; customise stages with ``steps:``
+        if isinstance(data, dict):
+            stale = [k for k in ("preprocessing", "features", "selection") if data.get(k)]
+            if stale:
+                import warnings
+
+                warnings.warn(
+                    f"TaskConfig keys {stale} are ignored (removed in mlkit 1.0); "
+                    "customise pipeline stages with 'steps:' instead.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            data = {
+                k: v for k, v in data.items() if k not in ("preprocessing", "features", "selection")
+            }
+        return data
 
     @model_validator(mode="before")
     @classmethod

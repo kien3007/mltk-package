@@ -1,0 +1,54 @@
+site_name: mlkit (mltk-package)
+site_description: Tabular machine learning toolkit — data QC/EDA, leak-free pipelines, model arena, forecasting, bundles and monitoring
+site_url: https://kien3007.github.io/mltk-package/
+repo_url: https://github.com/kien3007/mltk-package
+repo_name: kien3007/mltk-package
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  language: vi
+  features:
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Chế độ tối
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Chế độ sáng
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Trang chủ: index.md
+  - Hướng dẫn sử dụng: HUONG_DAN_SU_DUNG.md
+  - Lộ trình phát triển: ROADMAP.md
+  - Nhật ký thay đổi: CHANGELOG.md
+  - Quyết định kiến trúc (ADR):
+      - "ADR-001: BaseFrameTransformer kế thừa sklearn BaseEstimator và TransformerMixin": adr/ADR-001-basframetransformer-sklearn.md
+      - "ADR-002: Structured JSON Logging với ContextVar run_id": adr/ADR-002-logging-format.md
+      - "ADR-003: Serialization ưu tiên skops thay vì pickle": adr/ADR-003-serialization.md
+      - "ADR-004: Phạm vi bài toán v1 giới hạn ở phân loại nhị phân và hồi quy": adr/ADR-004-binary-and-regression-scope.md
+      - "ADR-005: mltk là Library Collection, không phải Framework": adr/ADR-005-library-collection-definition.md
+      - "ADR-006: Cross-validation ở mức toàn pipeline là mặc định": adr/ADR-006-pipeline-level-cv.md
+      - "ADR-007: Lớp profile dùng chung và benchmark tính tổng quát": adr/ADR-007-shared-profile-and-generality-benchmark.md
+      - "ADR-008: Cam kết độ bền cho tầng dữ liệu": adr/ADR-008-robustness-contract.md
+      - "ADR-009: Hỗ trợ phân loại nhiều lớp (thay thế ADR-004)": adr/ADR-009-multiclass-classification.md
+      - "ADR-010: Dự báo chuỗi thời gian trên nền pipeline dạng bảng": adr/ADR-010-forecasting.md
+      - "ADR-011: Dữ liệu lớn, văn bản ngữ nghĩa và nối bảng đúng thời điểm": adr/ADR-011-scale-text-multitable.md
+      - "ADR-012: Ký bundle bằng HMAC (thay thế ADR-003)": adr/ADR-012-bundle-signing.md
