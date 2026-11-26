@@ -11,12 +11,12 @@ jobs:
   openml:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
       - run: uv python install 3.12
       - run: uv sync --all-extras
       - name: Cache OpenML downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/scikit_learn_data
           key: openml-${{ hashFiles('src/mlkit/benchmarks.py') }}
@@ -30,7 +30,7 @@ jobs:
         env:
           MPLBACKEND: Agg
         run: uv run mlkit benchmark --suite timeseries --no-eda --out timeseries-results.csv
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: openml-results
